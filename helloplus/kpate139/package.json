@@ -1,0 +1,9 @@
+{
+  "name": "shopping-assistant",
+  "version": "1.0.0",
+  "description": "A simple Node.js backend for an AI shopping assistant.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
