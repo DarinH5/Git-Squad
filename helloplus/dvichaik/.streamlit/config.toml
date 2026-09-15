@@ -1,0 +1,10 @@
+
+[theme]
+base = "dark"
+##backgroundColor = "#2D302D"
+
+##backgroundColor = "#0d0d0d"
+##secondaryBackgroundColor = "#d92323"
+
+backgroundColor = "#524646"
+secondaryBackgroundColor = "#FCF2E5"
