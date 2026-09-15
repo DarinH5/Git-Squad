@@ -11,7 +11,6 @@ def login():
     if (st.button("Press to Login")):
         st.session_state.logged_in = True
         st.rerun()
-    # Replace this with your actual authentication logic
     #if username == "admin" and password == "password":
     #   st.session_state.logged_in = True
     #    st.success("Logged in successfully!")
