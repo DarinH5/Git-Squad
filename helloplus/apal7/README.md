@@ -21,4 +21,4 @@ Press CTRL+C to quit
  How this relates to our project of scrolling AI from Databases is that for our final product, we plan on implementing APIs and Hyperlinks to ensure when
  the user navigates on the web,they will the particular product they are interested in. In other words, when the user is clicking on the link, the site recieves the 
  destination and that information gets sent back to the front end. This file was just a simple test on one of the features my group and I will implement in the final
- project because our databases will need to rely on LLM' and APIs to connect different pages the user desires to be on.
+ project because our databases will need to rely on LLMs and APIs to connect different pages the user desires to be on.
