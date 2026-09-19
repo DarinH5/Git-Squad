@@ -25,6 +25,7 @@ login_page = st.Page(login, title="Login")
 logout_page = st.Page(logout, title="Logout")
 
 home_page = st.Page("pages/Home.py", title="Home", default=True )
+project_page = st.Page("pages/Projects.py", title="Project", )
 
 profile = st.Page("pages/Profile.py", title="Profile", )
 
@@ -32,7 +33,7 @@ if st.session_state.logged_in:
     pg = st.navigation(
         {
             "Account": [profile,logout_page],
-            "Home": [home_page]
+            "Home": [home_page,project_page]
         }
     )
 else:

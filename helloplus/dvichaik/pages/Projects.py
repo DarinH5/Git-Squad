@@ -1,4 +1,6 @@
 import streamlit as st
+st.title("Projects Page")
+st.markdown("Save items, and organize them into groups here!")
 st.markdown("""
 <style>
     textarea { font-size: 1.25rem !important; }
@@ -12,10 +14,9 @@ st.markdown("""
     [data-testid="stNavSectionHeader"]{
         font-size: 2.25rem !important;
     }
+
+    
+
 </style>""",
     unsafe_allow_html=True
 )
-st.title("User Profile Page")
-st.markdown("Hello World!")
-st.text_area("Describe yourself in a few sentences: The AI will use this to " \
-              "tailor its selections to your preferences.")

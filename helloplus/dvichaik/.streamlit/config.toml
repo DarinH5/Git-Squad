@@ -6,5 +6,12 @@ base = "dark"
 ##backgroundColor = "#0d0d0d"
 ##secondaryBackgroundColor = "#d92323"
 
+
+#secondaryBackgroundColor = "#FCF2E5"
+
+
+#Dark mode
 backgroundColor = "#524646"
-secondaryBackgroundColor = "#FCF2E5"
+secondaryBackgroundColor = "#2f2b2b"
+textColor = "#FCF2E5"
+
