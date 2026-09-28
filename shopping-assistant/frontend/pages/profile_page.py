@@ -44,6 +44,6 @@ def show_profile_picture():
         </h1>
     """, unsafe_allow_html=True)
 
-    st.text_area("Bio", value="Tell us about yourself.", height=100)
+    st.text_area("Bio", placeholder="Tell us about yourself.", height=100)
 
 show_profile_picture()

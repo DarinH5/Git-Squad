@@ -7,6 +7,10 @@
 #Implement sidebar for navigation
 #Create logo
 import streamlit as st
+from components import settings_menu
+
+settings_menu()
+
 col1, col2, col3 = st.columns([1,1,1])
 with col2:
     st.image("images/shopping_cart.png", width = "content")
@@ -20,4 +24,4 @@ st.markdown("""
         Welcome to the Shopping Assistant Website
     </div>
 """, unsafe_allow_html=True)
-st.text_area("Search for products", height=100)
+st.text_area("Search for products", placeholder="Enter product name", height=100)

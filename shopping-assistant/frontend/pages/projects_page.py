@@ -1,1 +1,1 @@
-#Where users can save deals they want and organize them into groups
+#Where users can save deals they want and organize them into groups if we want to add

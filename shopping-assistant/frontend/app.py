@@ -15,6 +15,11 @@ def login():
                 text-align: center;
                 font-size: 7rem !important;
             }
+            
+            div[data-testid="stTextInput"] label{
+                display: block !important;
+                text-align: center !important;
+            }
         </style>
     <h1 class = "login_title">
         Login
@@ -37,33 +42,14 @@ def login():
             #st.session_state.page = "recover_page"
             st.switch_page(recover_page)
 
-def recover():
-    st.markdown("""
-        <style>
-            .recover_title {
-                text-align: center;
-                font-size: 4rem !important;
-            }
-        </style>
-    <h1 class = "recover_title">
-        Recover Password
-    </h1>
-    """, unsafe_allow_html=True)
-    email = st.text_input("Email/Username?")
-    if st.button("Send Reset Link"):
-        # Handle password reset logic here
-        st.write("Reset link sent to your email.")
-        pass
-    if st.button("Back to Login"):
-        st.switch_page(login_page)
-
 def logout():
     st.session_state.logged_in = False
     st.rerun()
 
 login_page = st.Page(login, title="Login")
 logout_page = st.Page(logout, title="Logout")
-recover_page = st.Page(recover, title="Recover Password")
+#recover_page = st.Page(recover, title="Recover Password")
+recover_page = st.Page("pages/recover_page.py", title="Recover Password")
 home_page = st.Page("pages/home_page.py", title="Home", default=True )
 project_page = st.Page("pages/projects_page.py", title="Project", )
 profile = st.Page("pages/profile_page.py", title="Profile", )
