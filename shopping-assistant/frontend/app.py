@@ -41,6 +41,8 @@ def login():
             #pg = st.navigation([recover_page])
             #st.session_state.page = "recover_page"
             st.switch_page(recover_page)
+        if (st.button("Don't have an account? Sign up here")):
+            st.switch_page(signup_page)
 
 def logout():
     st.session_state.logged_in = False
@@ -54,6 +56,7 @@ home_page = st.Page("pages/home_page.py", title="Home", default=True )
 project_page = st.Page("pages/projects_page.py", title="Project", )
 profile = st.Page("pages/profile_page.py", title="Profile", )
 faq_page = st.Page("pages/faq_page.py", title="FAQ", )
+signup_page = st.Page("pages/signup_page.py", title="Sign Up")
 
 if st.session_state.logged_in:
     pg = st.navigation(
@@ -65,6 +68,6 @@ if st.session_state.logged_in:
     )
 else:
     #pg = st.navigation({"Welcome":[login_page, recover_page]})
-    pg = st.navigation([login_page,recover_page])
+    pg = st.navigation([login_page,recover_page,signup_page])
 pg.run()
 
