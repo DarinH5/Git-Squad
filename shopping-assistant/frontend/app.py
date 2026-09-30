@@ -57,13 +57,15 @@ project_page = st.Page("pages/projects_page.py", title="Project", )
 profile = st.Page("pages/profile_page.py", title="Profile", )
 faq_page = st.Page("pages/faq_page.py", title="FAQ", )
 signup_page = st.Page("pages/signup_page.py", title="Sign Up")
+chatbot_page = st.Page("pages/chatbot_page.py", title="Chatbot")
 
 if st.session_state.logged_in:
     pg = st.navigation(
         {
             "Account": [profile,logout_page],
             "Home": [home_page,project_page],
-            "Help": [faq_page]
+            "Help": [faq_page],
+            "Chatbot": [chatbot_page]
         }
     )
 else:
