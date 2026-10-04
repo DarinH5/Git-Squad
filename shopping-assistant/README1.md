@@ -9,7 +9,7 @@ Go to the project directory:
 
 Activate the virtual environment:
 
-<img width="1046" height="136" alt="image" src="https://github.com/user-attachments/assets/41de90d4-2e91-4692-b8c3-f4b1e1d07205" />
+<img width="1007" height="132" alt="image" src="https://github.com/user-attachments/assets/baca8ac9-4620-48cd-842e-a0684a653ae2" />
 
 You should see (.venv) at the beginning:
 
