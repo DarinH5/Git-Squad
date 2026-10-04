@@ -21,7 +21,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from scoring import score_product
+from scoring import extract_price, extract_rating, extract_review_count, host_from_url, score_product
 
 DB_PATH = os.getenv("DB_PATH", "shopping_assistant.db")
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"
@@ -285,10 +285,51 @@ def reset_password(body: ResetIn):
 
 
 # ---------------------------------------------------------------- products
+_BUDGET_RE = re.compile(r"(?:under|below|less than|up to|around|max(?:imum)?(?: of)?)[^$0-9]{0,12}\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", re.I)
+_PRICE_RE = re.compile(r"\$\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)")
+
+
+def interpret_shopping_query(query: str) -> dict:
+    """Extract lightweight shopping intent without requiring an LLM/API key."""
+    clean = " ".join(query.split())
+    match = _BUDGET_RE.search(clean)
+    budget_max = float(match.group(1).replace(",", "")) if match else None
+
+    lower = clean.lower()
+    feature_terms = [
+        "noise cancellation", "wireless", "bluetooth", "waterproof", "portable",
+        "gaming", "student", "college", "4k", "oled", "usb-c", "fast charging",
+        "lightweight", "running", "office", "travel", "budget",
+    ]
+    features = [term for term in feature_terms if term in lower]
+
+    search_query = clean
+    if budget_max is not None and "buy online" not in lower:
+        search_query += f" under ${budget_max:g}"
+    if "buy online" not in search_query.lower():
+        search_query += " buy online price"
+
+    return {
+        "original_query": clean,
+        "budget_max": budget_max,
+        "features": features,
+        "search_query": search_query,
+    }
+
+
 def fetch_results(query: str) -> list:
     from ddgs import DDGS
 
-    return DDGS().text(f"{query} buy online price", safesearch="moderate", max_results=10)
+    return DDGS().text(query, safesearch="moderate", max_results=10)
+
+
+def _passes_budget(product: dict, budget_max: float | None) -> bool:
+    if budget_max is None:
+        return True
+    price = product.get("signals", {}).get("price")
+    # Keep products with no visible price; the score can still be useful and
+    # the user can verify the live price on the retailer page.
+    return price is None or price <= budget_max
 
 
 @app.get("/products/search")
@@ -297,8 +338,9 @@ def search_products(
     min_score: int = Query(0, ge=0, le=100),
     user: dict = Depends(current_user),
 ):
+    intent = interpret_shopping_query(q.strip())
     try:
-        raw = fetch_results(q.strip())
+        raw = fetch_results(intent["search_query"])
     except Exception:
         raise HTTPException(502, "Product search is unavailable right now. Please try again.")
 
@@ -309,8 +351,24 @@ def search_products(
             continue
         title = item.get("title") or "Shopping result"
         body = item.get("body") or ""
-        products.append({"title": title, "url": url, "description": body, **score_product(title, url, body)})
+        scored = score_product(title, url, body)
+        product = {
+            "title": title,
+            "url": url,
+            "description": body,
+            "retailer": host_from_url(url),
+            "price": extract_price(f"{title} {body}"),
+            "rating": extract_rating(f"{title} {body}"),
+            "review_count": extract_review_count(f"{title} {body}"),
+            **scored,
+        }
+        if product["score"] >= min_score and _passes_budget(product, intent["budget_max"]):
+            products.append(product)
 
-    products = [p for p in products if p["score"] >= min_score]
     products.sort(key=lambda p: p["score"], reverse=True)
-    return {"query": q, "count": len(products), "products": products}
+    return {
+        "query": intent["original_query"],
+        "intent": intent,
+        "count": len(products),
+        "products": products,
+    }

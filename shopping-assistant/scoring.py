@@ -1,13 +1,8 @@
-"""Product quality score (0-100).
+"""Transparent 0-100 product quality/reliability heuristic.
 
-This is a transparent *heuristic* computed from what a web-search result
-exposes (domain, URL scheme, and rating/review/price text in the snippet).
-It is not a verified product rating. Swap in a real ratings API later by
-replacing `score_product`; the return shape is what the UI relies on.
-
-Breakdown (max points):
-    source trust 45 | rating 25 | review volume 15 | https 10 | price shown 5
-    minus up to 30 for scam/counterfeit red flags.
+The score is based only on information visible in a search result. It is NOT a
+verified product-quality guarantee. A structured shopping API can replace the
+parsers later without changing the response shape used by the UI.
 """
 import math
 import re
@@ -33,17 +28,29 @@ _RATING_PATTERNS = (
     re.compile(r"(\d(?:\.\d)?)\s*(?:out of|/)\s*5", re.I),
     re.compile(r"(\d(?:\.\d)?)\s*(?:stars?|★)", re.I),
 )
-_REVIEW_COUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s?([kK])?\s*(?:customer\s+)?(?:reviews?|ratings?)")
-_PRICE = re.compile(r"\$\s?\d")
+_REVIEW_COUNT = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s?([kK])?\s*(?:customer\s+)?(?:reviews?|ratings?)"
+)
+_PRICE = re.compile(r"\$\s?([0-9][0-9,]*(?:\.\d{1,2})?)")
 
 
-def _host(url: str) -> str:
+def host_from_url(url: str) -> str:
     host = (urlparse(url).netloc or "").lower().split(":")[0]
     return host[4:] if host.startswith("www.") else host
 
 
 def _matches(host: str, domains) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def extract_price(text: str):
+    values = []
+    for match in _PRICE.finditer(text):
+        try:
+            values.append(float(match.group(1).replace(",", "")))
+        except ValueError:
+            pass
+    return min(values) if values else None
 
 
 def _extract_rating(text: str):
@@ -53,6 +60,10 @@ def _extract_rating(text: str):
             if 0 < value <= 5:
                 return value
     return None
+
+
+def extract_rating(text: str):
+    return _extract_rating(text)
 
 
 def _extract_review_count(text: str) -> int:
@@ -68,14 +79,17 @@ def _extract_review_count(text: str) -> int:
     return best
 
 
+def extract_review_count(text: str) -> int:
+    return _extract_review_count(text)
+
+
 def score_product(title: str, url: str, body: str) -> dict:
     text = f"{title} {body}"
     lowered = text.lower()
-    host = _host(url)
+    host = host_from_url(url)
     is_https = url.lower().startswith("https://")
     reasons = []
 
-    # Source trust (0-45)
     if _matches(host, TRUSTED_RETAILERS):
         trust = 45
         reasons.append(f"Sold by a well-known retailer ({host})")
@@ -89,7 +103,6 @@ def score_product(title: str, url: str, body: str) -> dict:
         trust = 20 if is_https else 8
         reasons.append(f"Unrecognized seller ({host or 'unknown'}); verify before buying")
 
-    # Rating (0-25)
     rating = _extract_rating(text)
     if rating is not None:
         rating_pts = round(rating / 5 * 25)
@@ -98,19 +111,20 @@ def score_product(title: str, url: str, body: str) -> dict:
         rating_pts = 0
         reasons.append("No rating found in the listing")
 
-    # Review volume (0-15), log scale: ~10,000 reviews = full marks
     count = _extract_review_count(text)
     review_pts = min(15, round(15 * math.log10(count + 1) / 4)) if count else 0
     if count:
         reasons.append(f"About {count:,} reviews mentioned")
 
-    # HTTPS (0-10) and price (0-5)
     https_pts = 10 if is_https else 0
     if not is_https:
         reasons.append("Link is not HTTPS")
-    price_pts = 5 if _PRICE.search(text) else 0
 
-    # Red flags (up to -30)
+    price = extract_price(text)
+    price_pts = 5 if price is not None else 0
+    if price is not None:
+        reasons.append(f"Price information found (${price:,.2f})")
+
     flags = [flag for flag in RED_FLAGS if flag in lowered]
     penalty = min(30, 15 * len(flags))
     if flags:
@@ -131,5 +145,11 @@ def score_product(title: str, url: str, body: str) -> dict:
             "https": https_pts,
             "price_shown": price_pts,
             "penalty": -penalty,
+        },
+        "signals": {
+            "retailer": host,
+            "price": price,
+            "rating": rating,
+            "review_count": count,
         },
     }

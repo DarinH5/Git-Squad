@@ -74,5 +74,11 @@ def reset_password(token: str, new_password: str) -> dict:
     return _request("POST", "/auth/reset", json={"token": token, "new_password": new_password})
 
 
-def search_products(query: str, token: str) -> list:
-    return _request("GET", "/products/search", token, params={"q": query})["products"]
+def search_products(query: str, token: str, min_score: int = 0) -> dict:
+    """Search products and return both ranked products and interpreted intent."""
+    return _request(
+        "GET",
+        "/products/search",
+        token,
+        params={"q": query, "min_score": min_score},
+    )
