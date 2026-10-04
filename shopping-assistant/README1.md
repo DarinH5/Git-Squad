@@ -1,6 +1,6 @@
 How to Run and Access the GitSquad Website
 
-Once the project has been set up, you need two PowerShell terminals running at the same time: one for the FastAPI backend and one for the Streamlit website. NOTE: The directory names shown are from my laptop, but when you download the zipfile, it should follow a similar set up on your computers.
+Once the project has been set up, you need two PowerShell terminals running at the same time: one for the FastAPI backend and one for the Streamlit website. NOTE: The directory names shown are from my laptop, but when you download the zipfile, you should follow a similar set up on your computers.
 
 1. Open PowerShell — Terminal 1
 Go to the project directory:
