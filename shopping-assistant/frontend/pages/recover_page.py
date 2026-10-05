@@ -1,5 +1,4 @@
 import streamlit as st
-from app import login_page
 
 def email_entered():
     email = st.session_state.email
@@ -47,4 +46,5 @@ with col2:
         st.write("Reset link sent to your email.")
         pass
     if st.button("Back to Login"):
-        st.switch_page(login_page)
+        st.session_state.page = "login_page"
+        st.rerun()

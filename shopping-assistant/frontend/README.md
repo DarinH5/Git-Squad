@@ -7,3 +7,8 @@
 ## Sprint 1
     - Created basic UI
     - Connected all the pages together for functionality
+
+
+#Sprint 2:
+ - Added user login using fastapi
+ - Still need to work on account recovery but that can be later

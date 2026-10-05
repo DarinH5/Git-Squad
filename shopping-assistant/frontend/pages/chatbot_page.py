@@ -1,6 +1,6 @@
 import streamlit as st
 
-from components import apply_theme, settings_menu
+from components import settings_menu
 
 
 def search_products(item: str) -> list[dict[str, str]]:
@@ -31,7 +31,6 @@ def show_results(item: str, results: list[dict[str, str]]) -> None:
 
 
 settings_menu()
-apply_theme()
 
 st.title("Shopping Assistant")
 st.write("Tell me what you want to buy and I’ll search the web for useful options.")

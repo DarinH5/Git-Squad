@@ -7,11 +7,10 @@
 #Implement sidebar for navigation
 #Create logo
 import streamlit as st
-from components import apply_theme, settings_menu
+from components import settings_menu
 
 
 settings_menu()
-apply_theme()
 
 col1, col2, col3 = st.columns([1,1,1])
 with col2:

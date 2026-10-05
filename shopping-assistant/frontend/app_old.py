@@ -1,0 +1,65 @@
+#PROBABLY OBSOLETE BUT I DIDN'T DELETE IT YET, JUST IN CASE
+
+#Deals with login logic and other stuff
+import streamlit as st
+#Where I should handle login checks
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False 
+
+##def login(username, password):
+def login():
+    ##Markdown logic
+    ##Uses HTML, use !important to override default styles
+    st.markdown("""
+        <style>
+            .login_title {
+                text-align: center;
+                font-size: 7rem !important;
+            }
+            
+            div[data-testid="stTextInput"] label{
+                display: block !important;
+                text-align: center !important;
+            }
+        </style>
+    <h1 class = "login_title">
+        Login
+    </h1>
+    """, unsafe_allow_html=True)
+    #Creates columns, number in array represent width of that column
+    col1, col2, col3  = st.columns([1, 1 ,1])
+    with col2:
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if (st.button("Press to Login")):
+            #st.session_state.logged_in = True
+            if (username == "admin" and password == "password"):
+                st.session_state.logged_in = True
+            else:
+                st.write("Invalid username or password")
+            st.rerun()
+        #if (st.button("Forgot Password?")):
+            #pg = st.navigation([recover_page])
+            #st.session_state.page = "recover_page"
+            st.switch_page(recover_page)
+        if (st.button("Don't have an account? Sign up here")):
+            st.switch_page(signup_page)
+
+def logout():
+    st.session_state.logged_in = False
+    st.rerun()
+
+#login_page = st.Page(login, title="Login")
+#logout_page = st.Page(logout, title="Logout")
+#recover_page = st.Page(recover, title="Recover Password")
+recover_page = st.Page("pages/recover_page.py", title="Recover Password")
+home_page = st.Page("pages/home_page.py", title="Home", default=True )
+#project_page = st.Page("pages/projects_page.py", title="Project", )
+profile = st.Page("pages/profile_page.py", title="Profile", )
+faq_page = st.Page("pages/faq_page.py", title="FAQ", )
+signup_page = st.Page("pages/signup_page.py", title="Sign Up")
+chatbot_page = st.Page("pages/chatbot_page.py", title="Chatbot")
+
+
+
