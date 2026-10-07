@@ -25,11 +25,12 @@ home_page = st.Page("pages/home_page.py", title="Home", default=True)
 chatbot_page = st.Page("pages/chatbot_page.py", title="Chatbot",)
 profile_page = st.Page("pages/profile_page.py", title="Profile")
 faq_page = st.Page("pages/faq_page.py", title="FAQ")
+products_page = st.Page("pages/products_page.py", title="Browse")
 
 
 #Creates the sidebar for navigation when user is logged in
 if st.session_state.logged_in:
-    pg = st.navigation({"Shop": [home_page, chatbot_page], "Account": [profile_page, faq_page]})
+    pg = st.navigation({"Shop": [home_page, chatbot_page, products_page], "Account": [profile_page, faq_page]})
     with st.sidebar:
         st.divider()
         st.write(f"Signed in as **{st.session_state.username}**")
