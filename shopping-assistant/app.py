@@ -2,7 +2,7 @@
 import streamlit as st
 
 import api_client as api
-from components import apply_theme
+from frontend.components import apply_theme
 
 if "logged_in" not in st.session_state:
     api.clear_session()

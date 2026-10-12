@@ -8,9 +8,11 @@ Logged in  -> sidebar navigation between the main pages.
 #Imports api from api.py to handle user login/logout functionality
 import streamlit as st
 import api
+from components import apply_theme, settings_menu
 
 #UI stuff
 st.set_page_config(page_title="Shopping Assistant", layout="wide")
+apply_theme()
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -39,5 +41,8 @@ if st.session_state.logged_in:
             st.rerun()
 else:
     pg = st.navigation([login_page, recover_page], position="hidden")
+
+if st.session_state.logged_in:
+    settings_menu()
 
 pg.run()

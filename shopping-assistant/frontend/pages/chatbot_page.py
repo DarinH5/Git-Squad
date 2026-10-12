@@ -1,7 +1,5 @@
 import streamlit as st
 
-from components import settings_menu
-
 
 def search_products(item: str) -> list[dict[str, str]]:
 	from ddgs import DDGS
@@ -55,7 +53,6 @@ def process_prompt(item: str) -> None:
 	)
 
 
-settings_menu()
 
 st.title("Shopping Assistant")
 st.write("Tell me what you want to buy and I’ll search the web for useful options.")

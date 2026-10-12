@@ -7,7 +7,6 @@
 #Implement sidebar for navigation
 #Create logo
 import streamlit as st
-from components import settings_menu
 
 
 def open_chatbot() -> None:
@@ -16,8 +15,6 @@ def open_chatbot() -> None:
         st.session_state.pending_chat_prompt = prompt
         st.switch_page("pages/chatbot_page.py")
 
-
-settings_menu()
 
 col1, col2, col3 = st.columns([1,1,1])
 with col2:
