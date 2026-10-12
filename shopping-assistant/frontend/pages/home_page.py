@@ -10,6 +10,13 @@ import streamlit as st
 from components import settings_menu
 
 
+def open_chatbot() -> None:
+    prompt = st.session_state.home_search.strip()
+    if prompt:
+        st.session_state.pending_chat_prompt = prompt
+        st.switch_page("pages/chatbot_page.py")
+
+
 settings_menu()
 
 col1, col2, col3 = st.columns([1,1,1])
@@ -25,4 +32,9 @@ st.markdown("""
         Welcome to the Shopping Assistant Website
     </div>
 """, unsafe_allow_html=True)
-st.text_area("Search for products", placeholder="Enter product name", height=100)
+st.text_input(
+    "Search for products",
+    placeholder="Enter product name",
+    key="home_search",
+    on_change=open_chatbot,
+)

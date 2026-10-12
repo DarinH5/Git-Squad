@@ -30,6 +30,31 @@ def show_results(item: str, results: list[dict[str, str]]) -> None:
 		st.caption(result["body"])
 
 
+def process_prompt(item: str) -> None:
+	st.session_state.shopping_messages.append({"role": "user", "content": item})
+	with st.chat_message("user"):
+		st.write(item)
+
+	with st.chat_message("assistant"):
+		search_failed = False
+		with st.spinner("Searching the web..."):
+			try:
+				results = search_products(item)
+			except Exception:
+				results = []
+				search_failed = True
+				st.error("The web search is unavailable right now. Please try again in a moment.")
+
+		if results:
+			show_results(item, results)
+		elif not search_failed:
+			st.info(f"I couldn't find results for **{item}**. Try a broader product name.")
+
+	st.session_state.shopping_messages.append(
+		{"role": "assistant", "item": item, "results": results}
+	)
+
+
 settings_menu()
 
 st.title("Shopping Assistant")
@@ -50,28 +75,9 @@ for message in st.session_state.shopping_messages:
 		else:
 			st.write(message["content"])
 
-if prompt := st.chat_input("Search for a product..."):
+pending_prompt = st.session_state.pop("pending_chat_prompt", None)
+prompt = pending_prompt or st.chat_input("Search for a product...")
+if prompt:
 	item = prompt.strip()
 	if item:
-		st.session_state.shopping_messages.append({"role": "user", "content": item})
-		with st.chat_message("user"):
-			st.write(item)
-
-		with st.chat_message("assistant"):
-			search_failed = False
-			with st.spinner("Searching the web..."):
-				try:
-					results = search_products(item)
-				except Exception:
-					results = []
-					search_failed = True
-					st.error("The web search is unavailable right now. Please try again in a moment.")
-
-			if results:
-				show_results(item, results)
-			elif not search_failed:
-				st.info(f"I couldn't find results for **{item}**. Try a broader product name.")
-
-		st.session_state.shopping_messages.append(
-			{"role": "assistant", "item": item, "results": results}
-		)
+		process_prompt(item)
