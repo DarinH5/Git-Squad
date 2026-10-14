@@ -23,6 +23,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me")  # set a real on
 ALGORITHM = "HS256"
 TOKEN_MINUTES = 60
 DB_PATH = "shop.db" # Path to the SQLite database file, saves all application data
+PROFILE_THEMES = ("Light", "Dark", "UT Knoxville")
 
 app = FastAPI(title="Shopping Assistant API") #Create the FastAPI app
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login") # Helper for handling OAuth2 password flow
@@ -58,9 +59,16 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                password_hash BLOB NOT NULL
+                password_hash BLOB NOT NULL,
+                theme TEXT NOT NULL DEFAULT 'Dark',
+                bio TEXT NOT NULL DEFAULT ''
             )"""
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        if "theme" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'Dark'")
+        if "bio" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
         # Example of a per-user table (saved items / wishlist)
         conn.execute(
             """CREATE TABLE IF NOT EXISTS saved_items (
@@ -124,6 +132,11 @@ class SignupRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ProfileUpdate(BaseModel):
+    theme: Optional[str] = None
+    bio: Optional[str] = Field(default=None, max_length=2000)
 
 
 # ---------- Auth helpers ----------
@@ -223,8 +236,39 @@ def login(
 # Retrieve the currently authenticated user's information
 # This is used to get the user's details once they are logged in
 @app.get("/me")
-def me(user: dict = Depends(get_current_user)):
-    return user
+def me(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    row = db.execute(
+        "SELECT username, theme, bio FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()
+    return dict(row)
+
+
+@app.put("/profile")
+def update_profile(
+    body: ProfileUpdate,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    if body.theme is not None and body.theme not in PROFILE_THEMES:
+        raise HTTPException(status_code=422, detail="Invalid theme")
+
+    updates = []
+    values = []
+    if body.theme is not None:
+        updates.append("theme = ?")
+        values.append(body.theme)
+    if body.bio is not None:
+        updates.append("bio = ?")
+        values.append(body.bio)
+    if updates:
+        values.append(user["id"])
+        db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", values)
+        db.commit()
+
+    row = db.execute(
+        "SELECT username, theme, bio FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()
+    return dict(row)
 
 # When a get request is made from the frontend, this route handles the search functionality
 #Defines the format for a search request

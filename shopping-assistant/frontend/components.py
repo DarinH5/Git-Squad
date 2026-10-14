@@ -48,10 +48,37 @@ THEME_CSS = {"Light": LIGHT_CSS, "Dark": DARK_CSS, "UT Knoxville": UT_CSS}
 def _ensure_theme():
     if st.session_state.get("app_theme") not in THEMES:
         st.session_state.app_theme = "Dark"
+    if st.session_state.get("saved_theme") not in THEMES:
+        st.session_state.saved_theme = st.session_state.app_theme
 
 
-def _update_theme():
+def _preview_theme():
     st.session_state.app_theme = st.session_state.theme_selector
+
+
+def _settings_popover_changed():
+    saved_theme = st.session_state.saved_theme
+    st.session_state.theme_selector = saved_theme
+    st.session_state.app_theme = saved_theme
+
+
+def _start_theme_save():
+    st.session_state.theme_save_in_progress = True
+    st.session_state.pending_theme = st.session_state.theme_selector
+    st.rerun()
+
+
+def _save_pending_theme():
+    selected_theme = st.session_state.pending_theme
+    response = api.update_profile(theme=selected_theme)
+    st.session_state.theme_save_in_progress = False
+    st.session_state.pop("pending_theme", None)
+    if not response.ok:
+        st.error(f"Could not save your theme ({response.status_code}): {response.text}")
+        return
+    st.session_state.app_theme = selected_theme
+    st.session_state.saved_theme = selected_theme
+    st.success("Theme saved.")
 
 
 def settings_menu():
@@ -71,11 +98,22 @@ def settings_menu():
     _ensure_theme()
     if st.session_state.get("theme_selector") not in THEMES:
         st.session_state.theme_selector = st.session_state.app_theme
-    with st.popover("⚙️"):
-        st.selectbox("Theme", THEMES, key="theme_selector", on_change=_update_theme)
+    saving_theme = st.session_state.get("theme_save_in_progress", False)
+    with st.popover("⚙️", key="settings_popover", on_change=_settings_popover_changed):
+        st.selectbox(
+            "Theme",
+            THEMES,
+            key="theme_selector",
+            on_change=_preview_theme,
+            disabled=saving_theme,
+        )
+        if st.session_state.theme_selector != st.session_state.saved_theme:
+            st.button("Save theme", on_click=_start_theme_save, disabled=saving_theme)
         if st.button("Logout"):
             api.logout()
             st.rerun()
+    if saving_theme:
+        _save_pending_theme()
 
 
 def apply_theme():
