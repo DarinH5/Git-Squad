@@ -50,6 +50,8 @@ def login(username, password):
 def logout():
     for key in ("token", "username", "messages"):
         st.session_state.pop(key, None)
+    st.session_state.app_theme = "Dark"
+    st.session_state.pop("theme_selector", None)
     st.session_state.logged_in = False
 
 # This function performs an authenticated GET request to the backend.

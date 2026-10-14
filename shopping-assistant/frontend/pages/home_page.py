@@ -13,6 +13,7 @@ def open_chatbot() -> None:
     prompt = st.session_state.home_search.strip()
     if prompt:
         st.session_state.pending_chat_prompt = prompt
+        st.session_state.scroll_to_latest_search = True
         st.switch_page("pages/chatbot_page.py")
 
 

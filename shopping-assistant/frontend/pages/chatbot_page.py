@@ -1,4 +1,29 @@
 import streamlit as st
+import streamlit.components.v1 as components
+
+
+def scroll_to_latest_search() -> None:
+	components.html(
+		"""
+		<script>
+			let attempts = 0;
+			const scrollToSearch = function () {
+				const parentDocument = window.parent.document;
+				const marker = parentDocument.getElementById("latest-search");
+				if (marker) {
+					marker.scrollIntoView({ behavior: "smooth", block: "end" });
+					return;
+				}
+				attempts += 1;
+				if (attempts < 20) {
+					setTimeout(scrollToSearch, 100);
+				}
+			};
+			scrollToSearch();
+		</script>
+		""",
+		height=0,
+	)
 
 
 def search_products(item: str) -> list[dict[str, str]]:
@@ -74,7 +99,15 @@ for message in st.session_state.shopping_messages:
 
 pending_prompt = st.session_state.pop("pending_chat_prompt", None)
 prompt = pending_prompt or st.chat_input("Search for a product...")
+redirected_search = st.session_state.pop("scroll_to_latest_search", False)
 if prompt:
 	item = prompt.strip()
 	if item:
 		process_prompt(item)
+		if redirected_search:
+			st.session_state.scroll_after_search_render = True
+			st.rerun()
+
+if st.session_state.pop("scroll_after_search_render", False):
+	st.markdown('<div id="latest-search"></div>', unsafe_allow_html=True)
+	scroll_to_latest_search()
