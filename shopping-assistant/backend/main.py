@@ -237,6 +237,7 @@ def login(
 # This is used to get the user's details once they are logged in
 @app.get("/me")
 def me(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    # Return the signed-in user's account and saved profile preferences.
     row = db.execute(
         "SELECT username, theme, bio FROM users WHERE id = ?", (user["id"],)
     ).fetchone()
@@ -249,6 +250,7 @@ def update_profile(
     user: dict = Depends(get_current_user),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    # Validate and persist only the profile fields supplied by the client.
     if body.theme is not None and body.theme not in PROFILE_THEMES:
         raise HTTPException(status_code=422, detail="Invalid theme")
 

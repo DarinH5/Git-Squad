@@ -10,6 +10,7 @@ import api
 
 
 def _load_bio():
+    # Load the profile bio once per signed-in session.
     if st.session_state.get("profile_bio_loaded"):
         return st.session_state.get("bio", "")
 
@@ -23,12 +24,14 @@ def _load_bio():
 
 
 def _start_bio_save():
+    # Capture the edited bio and disable editing before the request starts.
     st.session_state.bio_save_in_progress = True
     st.session_state.pending_bio = st.session_state.bio_editor
     st.rerun()
 
 
 def _save_pending_bio():
+    # Persist the captured bio and update the local profile cache.
     response = api.update_profile(bio=st.session_state.pending_bio)
     st.session_state.bio_save_in_progress = False
     st.session_state.pop("pending_bio", None)
@@ -48,6 +51,7 @@ def _save_pending_bio():
 #Turns the binary image date into text that html can read/access
 #Need this because html src expects an url of some sort
 def show_profile_picture():
+    # Render the profile image, heading, and read-only/editable bio controls.
     with open("images/shopping_cart.png", "rb") as image_file:
         encoded = base64.b64encode(image_file.read()).decode()
     st.markdown(f"""

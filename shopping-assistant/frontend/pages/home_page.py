@@ -10,6 +10,7 @@ import streamlit as st
 
 
 def open_chatbot() -> None:
+	# Pass the home-page search text to the chatbot page.
     prompt = st.session_state.home_search.strip()
     if prompt:
         st.session_state.pending_chat_prompt = prompt

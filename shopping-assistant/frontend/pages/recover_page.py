@@ -2,6 +2,7 @@
 
 import streamlit as st
 def email_entered():
+    # Validate that the recovery email fields match before continuing.
     email = st.session_state.email
     confirm_email = st.session_state.confirm_email
 

@@ -7,6 +7,7 @@ API = "http://localhost:8000"
 
 
 def signup(username, password):
+    # Create an account and return a UI-friendly success or error message.
     """Returns (ok, message)."""
     try:
         r = requests.post(
@@ -26,6 +27,7 @@ def signup(username, password):
 
 
 def login(username, password):
+    # Authenticate the user and load their saved profile preferences.
     """Returns (ok, message). On success, sets the session state flags."""
     try:
         r = requests.post(
@@ -51,6 +53,7 @@ def login(username, password):
 
 
 def logout():
+    # Clear local account and profile state without deleting persisted data.
     """Clear local session state without changing persisted profile data."""
     for key in ("token", "username", "messages", "bio", "saved_theme", "profile_bio_loaded"):
         st.session_state.pop(key, None)
@@ -60,6 +63,7 @@ def logout():
 
 
 def get(path, **params):
+    # Make an authenticated GET request and handle expired sessions.
     """Authenticated GET. Logs the user out if the token has expired."""
     r = requests.get(
         f"{API}{path}",

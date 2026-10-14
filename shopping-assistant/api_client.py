@@ -14,6 +14,7 @@ class ApiError(Exception):
 
 
 def _request(method: str, path: str, token: str = None, **kwargs):
+    # Send a backend request and convert HTTP failures into ApiError exceptions.
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         response = requests.request(
@@ -34,12 +35,14 @@ def _request(method: str, path: str, token: str = None, **kwargs):
 
 # ---- session helpers -------------------------------------------------------
 def set_session(data: dict):
+    # Store the token and account identity used by the active Streamlit session.
     st.session_state.logged_in = True
     st.session_state.token = data["token"]
     st.session_state.username = data["username"]
 
 
 def clear_session():
+    # Reset local authentication state when no account is signed in.
     st.session_state.logged_in = False
     st.session_state.token = None
     st.session_state.username = None
@@ -57,20 +60,24 @@ def logout_session():
 
 # ---- endpoints -------------------------------------------------------------
 def login(username: str, password: str) -> dict:
+    # Authenticate a user through the current backend API.
     return _request("POST", "/auth/login", json={"username": username, "password": password})
 
 
 def signup(username: str, email: str, password: str) -> dict:
+    # Create a new account through the current backend API.
     return _request(
         "POST", "/auth/signup", json={"username": username, "email": email, "password": password}
     )
 
 
 def recover(email: str) -> dict:
+    # Request a password-recovery token for an account email.
     return _request("POST", "/auth/recover", json={"email": email})
 
 
 def reset_password(token: str, new_password: str) -> dict:
+    # Replace the account password using a valid recovery token.
     return _request("POST", "/auth/reset", json={"token": token, "new_password": new_password})
 
 

@@ -9,6 +9,7 @@ if "logged_in" not in st.session_state:
 
 
 def login():
+    # Render the login form and establish the authenticated frontend session.
     st.markdown(
         """
         <style>
@@ -45,6 +46,7 @@ def login():
 
 
 def logout():
+    # Invalidate the current session and return to the logged-out navigation.
     api.logout_session()
     st.rerun()
 

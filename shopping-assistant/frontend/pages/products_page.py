@@ -8,6 +8,7 @@ st.write("Placeholder to see if product cards are displayed correctly")
 st.write("Could keep or delete depending on what we want to do")
 # Filters
 
+# Load the available categories and render the product search filters.
 #Sends a get request to retrieve categories from main
 #Creates three columns for search, category, and max price
 #Displays products based on these columns

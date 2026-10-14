@@ -2,6 +2,7 @@ import streamlit as st
 from app import login_page
 
 def password_entered():
+    # Validate that both password fields contain the same value.
     password = st.session_state.password
     c = st.session_state.confirm_password
 

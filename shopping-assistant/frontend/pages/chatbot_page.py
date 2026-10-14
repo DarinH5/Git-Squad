@@ -1,8 +1,9 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
-
+#Scrolls to latest search result
 def scroll_to_latest_search() -> None:
+	# Inject a small browser script that waits for and scrolls to the newest result.
 	components.html(
 		"""
 		<script>
@@ -25,8 +26,9 @@ def scroll_to_latest_search() -> None:
 		height=0,
 	)
 
-
+#Searches web for user input
 def search_products(item: str) -> list[dict[str, str]]:
+	# Query the search provider and normalize results for the chatbot UI.
 	from ddgs import DDGS
 
 	query = f"{item} buy online price"
@@ -43,6 +45,7 @@ def search_products(item: str) -> list[dict[str, str]]:
 
 
 def show_results(item: str, results: list[dict[str, str]]) -> None:
+	# Render product links and descriptions, or an informative empty-state message.
 	if not results:
 		st.info(f"I couldn't find results for **{item}**. Try a broader product name.")
 		return
@@ -54,6 +57,7 @@ def show_results(item: str, results: list[dict[str, str]]) -> None:
 
 
 def process_prompt(item: str) -> None:
+	# Record the user's request, perform the search, and store the assistant response.
 	st.session_state.shopping_messages.append({"role": "user", "content": item})
 	with st.chat_message("user"):
 		st.write(item)

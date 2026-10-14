@@ -35,15 +35,18 @@ _PRICE = re.compile(r"\$\s?([0-9][0-9,]*(?:\.\d{1,2})?)")
 
 
 def host_from_url(url: str) -> str:
+    # Normalize a URL into the hostname used by retailer checks.
     host = (urlparse(url).netloc or "").lower().split(":")[0]
     return host[4:] if host.startswith("www.") else host
 
 
 def _matches(host: str, domains) -> bool:
+    # Match both an exact domain and its subdomains.
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
 def extract_price(text: str):
+    # Extract the lowest dollar amount visible in a search result.
     values = []
     for match in _PRICE.finditer(text):
         try:
@@ -54,6 +57,7 @@ def extract_price(text: str):
 
 
 def _extract_rating(text: str):
+    # Parse common five-star rating formats from result text.
     for pattern in _RATING_PATTERNS:
         for match in pattern.finditer(text):
             value = float(match.group(1))
@@ -63,10 +67,12 @@ def _extract_rating(text: str):
 
 
 def extract_rating(text: str):
+    # Expose rating extraction while keeping parsing details private.
     return _extract_rating(text)
 
 
 def _extract_review_count(text: str) -> int:
+    # Parse review or rating counts, including abbreviated values such as 2k.
     best = 0
     for match in _REVIEW_COUNT.finditer(text):
         try:
@@ -80,10 +86,12 @@ def _extract_review_count(text: str) -> int:
 
 
 def extract_review_count(text: str) -> int:
+    # Expose review-count extraction while keeping parsing details private.
     return _extract_review_count(text)
 
 
 def score_product(title: str, url: str, body: str) -> dict:
+    # Combine trust, rating, review, HTTPS, price, and warning signals.
     text = f"{title} {body}"
     lowered = text.lower()
     host = host_from_url(url)

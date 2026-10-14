@@ -46,6 +46,7 @@ THEME_CSS = {"Light": LIGHT_CSS, "Dark": DARK_CSS, "UT Knoxville": UT_CSS}
 
 
 def _ensure_theme():
+    # Initialize valid saved and currently previewed theme values.
     if st.session_state.get("app_theme") not in THEMES:
         st.session_state.app_theme = "Dark"
     if st.session_state.get("saved_theme") not in THEMES:
@@ -53,22 +54,26 @@ def _ensure_theme():
 
 
 def _preview_theme():
+    # Apply the selected theme locally before it is persisted.
     st.session_state.app_theme = st.session_state.theme_selector
 
 
 def _settings_popover_changed():
+    # Restore the saved theme when the settings popover closes without saving.
     saved_theme = st.session_state.saved_theme
     st.session_state.theme_selector = saved_theme
     st.session_state.app_theme = saved_theme
 
 
 def _start_theme_save():
+    # Capture the selected theme and render the controls as disabled.
     st.session_state.theme_save_in_progress = True
     st.session_state.pending_theme = st.session_state.theme_selector
     st.rerun()
 
 
 def _save_pending_theme():
+    # Persist the captured theme and update the saved local baseline.
     selected_theme = st.session_state.pending_theme
     response = api.update_profile(theme=selected_theme)
     st.session_state.theme_save_in_progress = False
@@ -82,6 +87,7 @@ def _save_pending_theme():
 
 
 def settings_menu():
+    # Render theme controls and account actions in the settings popover.
     st.markdown(
         """
     <style>
@@ -117,6 +123,7 @@ def settings_menu():
 
 
 def apply_theme():
+    # Inject the CSS for the current theme into the Streamlit page.
     _ensure_theme()
     st.markdown(THEME_CSS[st.session_state.app_theme], unsafe_allow_html=True)
 
