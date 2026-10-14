@@ -8,10 +8,8 @@ THEMES = ["Light", "Dark", "UT Knoxville"]
 
 UT_ORANGE = "#FF8200"
 UT_LIGHT_ORANGE = "#FFB347"
-UT_GREY = "#4B4B4B"
 UT_LIGHT_GREY = "#F2F2F2"
 UT_WHITE = "#FFFFFF"
-UT_TEST = "#3717B4"
 
 DARK_CSS = """
 <style>
@@ -41,7 +39,6 @@ UT_CSS = f"""
     [data-testid="stTextInput"] input {{ background-color: {UT_LIGHT_GREY} !important; color: {UT_ORANGE} !important; outline: none !important; }}
     [data-testid="stTextInput"] input::placeholder {{ color: {UT_LIGHT_ORANGE} !important; }}
     [data-testid="st-emotion-cache-1tw7gkw"] {{background-color: none !important; }}
-
 </style>
 """
 
