@@ -1,3 +1,6 @@
+#Dont need this, delete or combine with api.py in frontend folder for organization
+
+
 """Thin wrapper the Streamlit pages use to talk to the FastAPI backend (main.py)."""
 import os
 

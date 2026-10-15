@@ -1,3 +1,5 @@
+#Delete or combine with on in backend folder for organization
+
 """Shopping Assistant backend (FastAPI + SQLite).
 
 Run:   uvicorn main:app --reload          (serves http://127.0.0.1:8000)

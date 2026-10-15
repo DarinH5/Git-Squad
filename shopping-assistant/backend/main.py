@@ -105,6 +105,8 @@ def get_db():
 
 
 # ---------- Schemas ----------
+
+#Create requirements for API requests and responses
 class SignupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
@@ -120,6 +122,8 @@ class Token(BaseModel):
 
 
 # ---------- Auth helpers ----------
+
+#THese are used to hash and verify passwords, and to create JWT tokens for authentication.
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
@@ -132,7 +136,8 @@ def create_token(username: str) -> str:
     expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=TOKEN_MINUTES)
     return jwt.encode({"sub": username, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
 
-
+# ---------- User helpers ----------
+# This retrieves the current user based on the JWT token provided in the Authorization header.
 def get_current_user(
     token: str = Depends(oauth2_scheme), db: sqlite3.Connection = Depends(get_db)
 ):
@@ -154,6 +159,8 @@ def get_current_user(
 
 
 # ---------- Routes ----------
+
+# Handles user signup and account creation.
 @app.post("/signup", status_code=201)
 def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
     try:
@@ -166,7 +173,8 @@ def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Username already taken")
     return {"message": "Account created"}
 
-
+# Handles user login and returns an access token.
+# THis access token is a JWT that must be included in the Authorization header for protected routes.
 @app.post("/login", response_model=Token)
 def login(
     form: OAuth2PasswordRequestForm = Depends(), db: sqlite3.Connection = Depends(get_db)
@@ -179,12 +187,13 @@ def login(
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     return Token(access_token=create_token(form.username))
 
-
+# Will be used to get the current user's information.
 @app.get("/me")
 def me(user: dict = Depends(get_current_user)):
     return user
 
 
+# Used to search for products based on query, price, and category.
 @app.get("/search")
 def search(
     q: str = "",
@@ -212,7 +221,8 @@ def search(
     rows = db.execute(sql, args).fetchall()
     return {"query": q, "results": [dict(r) for r in rows]}
 
-
+# Lists all product categories available in the store.
+# Used by the frontend to populate category filters.
 @app.get("/categories")
 def categories(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("SELECT DISTINCT category FROM products ORDER BY category").fetchall()
@@ -220,6 +230,9 @@ def categories(user: dict = Depends(get_current_user), db: sqlite3.Connection = 
 
 
 # ---------- Projects (named groups of products) ----------
+
+# Helper function to get a project owned by the current user
+# Returns the project row if it exists and belongs to the current user, otherwise raises a 404 error.
 def get_owned_project(db, project_id, user_id):
     """Return the project row, or 404. Also stops users from touching each other's projects."""
     row = db.execute(
@@ -229,7 +242,8 @@ def get_owned_project(db, project_id, user_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return row
 
-
+# Posts a request to create a new project
+# Returns the newly created project with its ID and name.
 @app.post("/projects", status_code=201)
 def create_project(
     body: ProjectCreate,
@@ -243,7 +257,7 @@ def create_project(
     db.commit()
     return {"id": cur.lastrowid, "name": name}
 
-
+# Lists all projects owned by the current user, including item counts, total prices, and thumbnails.
 @app.get("/projects")
 def list_projects(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     # One row per project, with the item count and the sum of its products' prices
@@ -277,6 +291,8 @@ def list_projects(user: dict = Depends(get_current_user), db: sqlite3.Connection
     return projects
 
 
+# Deletes a project owned by the current user, including all its items.
+# Returns a message indicating the deletion status.
 @app.delete("/projects/{project_id}")
 def delete_project(
     project_id: int,
@@ -290,6 +306,8 @@ def delete_project(
     return {"message": "Project deleted"}
 
 
+# Lists all items in a specific project owned by the current user.
+# Returns the project details along with its items.
 @app.get("/projects/{project_id}/items")
 def list_project_items(
     project_id: int,
@@ -322,7 +340,7 @@ def add_project_item(
     db.commit()
     return {"message": "Added" if cur.rowcount else "Already in project"}
 
-
+# Project item management endpoints
 @app.delete("/projects/{project_id}/items/{product_id}")
 def remove_project_item(
     project_id: int,

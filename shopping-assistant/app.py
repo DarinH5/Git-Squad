@@ -1,3 +1,5 @@
+# Dont need this, delete or combine with api.py in frontend folder for organization
+
 # Entry point: run with `streamlit run app.py` (backend must be running: uvicorn main:app --reload)
 import streamlit as st
 

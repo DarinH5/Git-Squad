@@ -1,3 +1,5 @@
+#NOT USED ANYMORE, HANDLED IN LOGIN PAGE
+
 import streamlit as st
 from app import login_page
 

@@ -1,3 +1,5 @@
+#Either delete or move this file into frontend for organization
+
 """Transparent 0-100 product quality/reliability heuristic.
 
 The score is based only on information visible in a search result. It is NOT a
