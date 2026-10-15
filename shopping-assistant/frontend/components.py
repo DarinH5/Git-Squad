@@ -2,6 +2,7 @@ import streamlit as st
 
 import api
 
+
 # Theme options shown in the settings menu. "UT Knoxville" = Tennessee Orange,
 # White and Smokey Grey.
 THEMES = ["Light", "Dark", "UT Knoxville"]
@@ -126,31 +127,58 @@ def apply_theme():
     # Inject the CSS for the current theme into the Streamlit page.
     _ensure_theme()
     st.markdown(THEME_CSS[st.session_state.app_theme], unsafe_allow_html=True)
+    
 
 
-def product_cards(products, per_row=3):
-    """Show a list of product dictionaries as a grid of cards."""
+def product_cards(products, per_row=3, key_prefix="browse", mode="browse", project_id=None):
+    """Show a list of product dicts as a grid of cards.
+ 
+    key_prefix: must differ for each call on the same page (each button needs a unique key).
+    mode: "browse"  -> "Add to project" menu + View button (Browse and Chatbot pages)
+          "project" -> Remove-from-project button + View button (Projects page; pass project_id)
+    """
     if not products:
         st.info("No products found. Try different words or loosen the filters.")
         return
-
+ 
+    # Fetch the user's projects once for the whole grid, not once per card
+    projects = []
+    if mode == "browse":
+        pr = api.get("/projects")
+        projects = pr.json() if pr.ok else []
+    project_names = {p["id"]: p["name"] for p in projects}
+ 
     for start in range(0, len(products), per_row):
-        row = products[start : start + per_row]
-        cols = st.columns(per_row)
-        for col, product in zip(cols, row):
+        row = products[start:start + per_row]
+        cols = st.columns(per_row)  # always per_row columns so the last row stays aligned
+        for col, p in zip(cols, row):
             with col.container(border=True):
-                if product.get("image_url"):
-                    st.image(product["image_url"])
-                st.markdown(f"**{product['title']}**")
-                st.caption(
-                    f"{product.get('brand') or ''} · "
-                    f"{product.get('category') or ''}"
-                )
-                st.write(
-                    f"**${product['price']:.2f}**  ·  "
-                    f"⭐ {product['rating']}"
-                )
-                if product.get("description"):
-                    st.write(product["description"])
-                if product.get("product_url"):
-                    st.link_button("View item", product["product_url"])
+                if p.get("image_url"):
+                    st.image(p["image_url"])
+                st.markdown(f"**{p['title']}**")
+                st.caption(f"{p.get('brand') or ''} · {p.get('category') or ''}")
+                st.write(f"**${p['price']:.2f}**  ·  ⭐ {p['rating']}")
+                if p.get("description"):
+                    st.write(p["description"])
+ 
+                b1, b2 = st.columns(2)
+                with b1:
+                    if mode == "browse":
+                        with st.popover("Add to project"):
+                            if not projects:
+                                st.caption("Create a project on the Projects page first.")
+                            else:
+                                pid = st.selectbox(
+                                    "Project",
+                                    [x["id"] for x in projects],
+                                    format_func=lambda i: project_names[i],
+                                    key=f"psel_{key_prefix}_{p['id']}",
+                                )
+                                if st.button("Add", key=f"padd_{key_prefix}_{p['id']}"):
+                                    r = api.post(f"/projects/{pid}/items", product_id=p["id"])
+                                    st.toast(r.json().get("message", "Added") if r.ok else "Couldn't add item")
+                    elif mode == "project":
+                        if st.button("Remove", key=f"premove_{key_prefix}_{p['id']}"):
+                            api.delete(f"/projects/{project_id}/items/{p['id']}")
+                            st.rerun()
+

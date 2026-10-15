@@ -12,7 +12,7 @@ from components import apply_theme, settings_menu
 
 #UI stuff
 st.set_page_config(page_title="Shopping Assistant", layout="wide")
-apply_theme()
+#apply_theme()
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -28,11 +28,13 @@ chatbot_page = st.Page("pages/chatbot_page.py", title="Chatbot",)
 profile_page = st.Page("pages/profile_page.py", title="Profile")
 faq_page = st.Page("pages/faq_page.py", title="FAQ")
 products_page = st.Page("pages/products_page.py", title="Browse")
+projects_page = st.Page("pages/projects_page.py", title="Projects")
+
 
 
 #Creates the sidebar for navigation when user is logged in
 if st.session_state.logged_in:
-    pg = st.navigation({"Shop": [home_page, chatbot_page, products_page], "Account": [profile_page, faq_page]})
+    pg = st.navigation({"Shop": [home_page, chatbot_page, products_page, projects_page], "Account": [profile_page, faq_page]})
     with st.sidebar:
         st.divider()
         st.write(f"Signed in as **{st.session_state.username}**")
@@ -41,8 +43,5 @@ if st.session_state.logged_in:
             st.rerun()
 else:
     pg = st.navigation([login_page, recover_page], position="hidden")
-
-if st.session_state.logged_in:
-    settings_menu()
 
 pg.run()

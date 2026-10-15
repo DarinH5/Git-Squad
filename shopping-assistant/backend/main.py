@@ -10,26 +10,20 @@ import sqlite3
 import datetime as dt
 from typing import Optional
 
-
-import bcrypt #used to hash passwords
-import jwt #deals with login tokens
-
-from fastapi import Depends, FastAPI, HTTPException, status 
+import bcrypt
+import jwt
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
-
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me")  # set a real one!
 ALGORITHM = "HS256"
 TOKEN_MINUTES = 60
-DB_PATH = "shop.db" # Path to the SQLite database file, saves all application data
-PROFILE_THEMES = ("Light", "Dark", "UT Knoxville")
+DB_PATH = "shop.db"
 
-app = FastAPI(title="Shopping Assistant API") #Create the FastAPI app
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login") # Helper for handling OAuth2 password flow
+app = FastAPI(title="Shopping Assistant API")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-#Sample database, need to replace with a real dataset later
-#Find a shopping product API to populate the database with real data later
 
 # ---------- Database ----------
 SAMPLE_PRODUCTS = [
@@ -47,35 +41,14 @@ SAMPLE_PRODUCTS = [
     ("Pour Over Coffee Set", "Glass dripper with reusable filter", "kitchen", "BrewCraft", 39.00, 4.4),
 ]
 
-# Creates the database and initializes the tables for users, saved items, and products
-# DB_PATH points to the SQLite database file used for storing all the data.
-# We run conn.execute 3 times to create the users, saved_items, and products tables.
-# This is only called once to initialize the database.
+
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
-        # Create the users table if it doesn't exist
-        # if it does exist, the program skips this and goes to the next table,
         conn.execute(
             """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                password_hash BLOB NOT NULL,
-                theme TEXT NOT NULL DEFAULT 'Dark',
-                bio TEXT NOT NULL DEFAULT ''
-            )"""
-        )
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-        if "theme" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'Dark'")
-        if "bio" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
-        # Example of a per-user table (saved items / wishlist)
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS saved_items (
-                id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                item_id TEXT NOT NULL,
-                title TEXT
+                password_hash BLOB NOT NULL
             )"""
         )
         conn.execute(
@@ -91,6 +64,22 @@ def init_db():
                 product_url TEXT
             )"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                name TEXT NOT NULL
+            )"""
+        )
+        # A product can be in a project only once (composite primary key)
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_items (
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                product_id INTEGER NOT NULL REFERENCES products(id),
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (project_id, product_id)
+            )"""
+        )
         # Seed sample data so the UI has something to show (replace with a real dataset later)
         if conn.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
             for i, (title, desc, cat, brand, price, rating) in enumerate(SAMPLE_PRODUCTS):
@@ -101,12 +90,10 @@ def init_db():
                      f"https://picsum.photos/seed/shop{i}/400/300"),
                 )
 
-#Call the init_db function to create the database and tables if they don't exist
+
 init_db()
 
-# This is called every time the API needs to access the database
-# yield is used to provide the database connection to the API routes, it pauses the function 
-# and yields the connection, this is good for managing database connections efficiently
+
 def get_db():
     # check_same_thread=False because FastAPI may use different threads
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -118,53 +105,34 @@ def get_db():
 
 
 # ---------- Schemas ----------
-# Used for defining the structure of signup requests and authentication tokens.
-# Essentially creates username and password requirements for user signup.
-# Checks incoming JSON data against the defined schema.
 class SignupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
 
 
-# This is used for defining the structure of authentication tokens.
-# returns a dictionary containing the access token and token type
-# used for logging in users
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
 
-class ProfileUpdate(BaseModel):
-    theme: Optional[str] = None
-    bio: Optional[str] = Field(default=None, max_length=2000)
-
-
 # ---------- Auth helpers ----------
-
-# Hashes the user's password using bcrypt for secure storage.
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
-# Verifies the user's password against the stored bcrypt hash.
+
 def verify_password(password: str, password_hash: bytes) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash)
 
 
-# HTTP has no memory, so when you login the server gives you a token and you use this token
-# with each subsequent request to authenticate yourself.
-# The token is a JWT, with a payload containing the username and expiration time.
-# A payload is the part of the JWT that contains the actual data.
-# The token is signed with a secret key to ensure its integrity, so if anyone changes
-# the user information, the token will become invalid.
-# USES THE SECRET_KEY above, so keep it secure
 def create_token(username: str) -> str:
     expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=TOKEN_MINUTES)
     return jwt.encode({"sub": username, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
 
-# Gets the current authenticated user based on the provided JWT token using the OAuth2 scheme.
-# Looks to see if the signature or expiration time is invalid.
-# Returns a dictionary containing the user's id and username if the token is valid.
-# Called every time a request is made that requires authentication.
+
 def get_current_user(
     token: str = Depends(oauth2_scheme), db: sqlite3.Connection = Depends(get_db)
 ):
@@ -174,9 +142,6 @@ def get_current_user(
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    # Try to decode the JWT token
-    # Error checks the signature and expiration time
-    # row = db.execute() purpose is to fetch the user's information from the database
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username = payload.get("sub")
@@ -187,22 +152,8 @@ def get_current_user(
         raise credentials_error
     return dict(row)
 
+
 # ---------- Routes ----------
-
-#POST sends data and GET retrieves data.
-
-# Defines the API routes for user authentication and product search.
-#app.post("/signup") - Handles user signup requests.
-#   the "/signup" is seen in the URL when a user attempts to create a new account.
-# this signals the user is on the signup page.
-# The signup route expects a POST request with the user's username and password.
-# Inserts a new user into the database with the provided username and hashed password.
-# db.commit() is called to save the changes to the database.
-
-# Signup route for creating a new user account.
-# Recieves a post request with the user's username and password.
-# Gets username/password from SignupRequest
-# stores the username/hashed password in the database
 @app.post("/signup", status_code=201)
 def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
     try:
@@ -215,12 +166,7 @@ def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Username already taken")
     return {"message": "Account created"}
 
-#app.post("/login") - Handles user login requests.
-# Recieves a post request from the frontend
-# Finds the username in the database
-# fetchone() returns the first row of the result set, which contains the user's password hash
-# if username is not found or password is incorrect, raise an error
-# Calls access_token to create a new token for the authenticated user
+
 @app.post("/login", response_model=Token)
 def login(
     form: OAuth2PasswordRequestForm = Depends(), db: sqlite3.Connection = Depends(get_db)
@@ -233,48 +179,12 @@ def login(
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     return Token(access_token=create_token(form.username))
 
-# Retrieve the currently authenticated user's information
-# This is used to get the user's details once they are logged in
+
 @app.get("/me")
-def me(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
-    # Return the signed-in user's account and saved profile preferences.
-    row = db.execute(
-        "SELECT username, theme, bio FROM users WHERE id = ?", (user["id"],)
-    ).fetchone()
-    return dict(row)
+def me(user: dict = Depends(get_current_user)):
+    return user
 
 
-@app.put("/profile")
-def update_profile(
-    body: ProfileUpdate,
-    user: dict = Depends(get_current_user),
-    db: sqlite3.Connection = Depends(get_db),
-):
-    # Validate and persist only the profile fields supplied by the client.
-    if body.theme is not None and body.theme not in PROFILE_THEMES:
-        raise HTTPException(status_code=422, detail="Invalid theme")
-
-    updates = []
-    values = []
-    if body.theme is not None:
-        updates.append("theme = ?")
-        values.append(body.theme)
-    if body.bio is not None:
-        updates.append("bio = ?")
-        values.append(body.bio)
-    if updates:
-        values.append(user["id"])
-        db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", values)
-        db.commit()
-
-    row = db.execute(
-        "SELECT username, theme, bio FROM users WHERE id = ?", (user["id"],)
-    ).fetchone()
-    return dict(row)
-
-# When a get request is made from the frontend, this route handles the search functionality
-#Defines the format for a search request
-# Searches through the products table and filters based on the provided criteria
 @app.get("/search")
 def search(
     q: str = "",
@@ -302,25 +212,127 @@ def search(
     rows = db.execute(sql, args).fetchall()
     return {"query": q, "results": [dict(r) for r in rows]}
 
-# Retrieve a list of all unique product categories
-# Used to filter products by category
+
 @app.get("/categories")
 def categories(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("SELECT DISTINCT category FROM products ORDER BY category").fetchall()
     return [r["category"] for r in rows]
 
-# When a user wants to save an item, a post request is sent to this endpoint
-# this saves the item to the user's saved items list
-@app.post("/saved")
-def save_item(
-    item_id: str,
-    title: str = "",
+
+# ---------- Projects (named groups of products) ----------
+def get_owned_project(db, project_id, user_id):
+    """Return the project row, or 404. Also stops users from touching each other's projects."""
+    row = db.execute(
+        "SELECT id, name FROM projects WHERE id = ? AND user_id = ?", (project_id, user_id)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return row
+
+
+@app.post("/projects", status_code=201)
+def create_project(
+    body: ProjectCreate,
     user: dict = Depends(get_current_user),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    db.execute(
-        "INSERT INTO saved_items (user_id, item_id, title) VALUES (?, ?, ?)",
-        (user["id"], item_id, title),
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name can't be blank")
+    cur = db.execute("INSERT INTO projects (user_id, name) VALUES (?, ?)", (user["id"], name))
+    db.commit()
+    return {"id": cur.lastrowid, "name": name}
+
+
+@app.get("/projects")
+def list_projects(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    # One row per project, with the item count and the sum of its products' prices
+    rows = db.execute(
+        "SELECT p.id, p.name, COUNT(pi.product_id) AS item_count, "
+        "COALESCE(SUM(pr.price), 0) AS total_price "
+        "FROM projects p "
+        "LEFT JOIN project_items pi ON pi.project_id = p.id "
+        "LEFT JOIN products pr ON pr.id = pi.product_id "
+        "WHERE p.user_id = ? GROUP BY p.id ORDER BY p.id",
+        (user["id"],),
+    ).fetchall()
+    projects = [dict(r) for r in rows]
+
+    # Thumbnails: image URLs of the items in each project (newest first)
+    image_rows = db.execute(
+        "SELECT pi.project_id, pr.image_url FROM project_items pi "
+        "JOIN products pr ON pr.id = pi.product_id "
+        "JOIN projects p ON p.id = pi.project_id "
+        "WHERE p.user_id = ? AND pr.image_url IS NOT NULL AND pr.image_url != '' "
+        "ORDER BY pi.added_at DESC, pi.rowid DESC",
+        (user["id"],),
+    ).fetchall()
+    images = {}
+    for r in image_rows:
+        images.setdefault(r["project_id"], []).append(r["image_url"])
+
+    for p in projects:
+        p["total_price"] = round(p["total_price"], 2)
+        p["thumbnails"] = images.get(p["id"], [])[:4]
+    return projects
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(
+    project_id: int,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    get_owned_project(db, project_id, user["id"])
+    db.execute("DELETE FROM project_items WHERE project_id = ?", (project_id,))
+    db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    db.commit()
+    return {"message": "Project deleted"}
+
+
+@app.get("/projects/{project_id}/items")
+def list_project_items(
+    project_id: int,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    project = get_owned_project(db, project_id, user["id"])
+    rows = db.execute(
+        "SELECT p.* FROM project_items pi JOIN products p ON p.id = pi.product_id "
+        "WHERE pi.project_id = ? ORDER BY pi.added_at DESC, pi.rowid DESC",
+        (project_id,),
+    ).fetchall()
+    return {"project": dict(project), "results": [dict(r) for r in rows]}
+
+
+@app.post("/projects/{project_id}/items", status_code=201)
+def add_project_item(
+    project_id: int,
+    product_id: int,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    get_owned_project(db, project_id, user["id"])
+    if db.execute("SELECT 1 FROM products WHERE id = ?", (product_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    cur = db.execute(
+        "INSERT OR IGNORE INTO project_items (project_id, product_id) VALUES (?, ?)",
+        (project_id, product_id),
     )
     db.commit()
-    return {"message": "Saved"}
+    return {"message": "Added" if cur.rowcount else "Already in project"}
+
+
+@app.delete("/projects/{project_id}/items/{product_id}")
+def remove_project_item(
+    project_id: int,
+    product_id: int,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    get_owned_project(db, project_id, user["id"])
+    db.execute(
+        "DELETE FROM project_items WHERE project_id = ? AND product_id = ?", (project_id, product_id)
+    )
+    db.commit()
+    return {"message": "Removed"}
