@@ -60,9 +60,16 @@ def show_project_list():
                         st.caption("Empty so far")
 
                 #If the user clicks "Open", set the open_project session state and rerun the app.
-                if st.button("Open", key=f"open_proj_{p['id']}"):
-                    st.session_state.open_project = p["id"]
-                    st.rerun()
+                bcol1, bcol2 = st.columns([2, 2])
+                with bcol1:
+                    if st.button("Open", key=f"open_proj_{p['id']}"):
+                        st.session_state.open_project = p["id"]
+                        st.rerun()
+                with bcol2:
+                    if st.button("Delete", key=f"delete_proj_{p['id']}"):
+                        api.delete(f"/projects/{p['id']}")
+                        st.session_state.open_project = None
+                        st.rerun()
 
 
 # Page for viewing and managing the details of a single project.

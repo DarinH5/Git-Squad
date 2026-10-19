@@ -1,4 +1,4 @@
-#Either delete or move this file into frontend for organization
+#Either delete or move this file into frontend/backend for organization
 
 """Transparent 0-100 product quality/reliability heuristic.
 

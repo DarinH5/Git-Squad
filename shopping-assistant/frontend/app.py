@@ -41,6 +41,7 @@ if st.session_state.logged_in:
         if st.button("Log out", use_container_width=True):
             api.logout()
             st.rerun()
+        
 else:
     pg = st.navigation([login_page, recover_page], position="hidden")
 
