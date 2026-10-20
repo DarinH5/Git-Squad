@@ -26,7 +26,10 @@ Docs:     http://localhost:8000/docs  (you can test signup/login here)
 # You might also use an ORM like SQLAlchemy to make the transition smoother and database-agnostic.
 # FOr now though, sqlite is sufficient?
 
-
+#Steamlit is the frontend framework being used 
+# for building the user interface of the shopping assistant website.
+# Its a python library that allows for the creation of 
+# interactive web applications directly from Python code.
 
 import os
 import sqlite3
@@ -37,8 +40,11 @@ import bcrypt
 import re 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, status
+    #Fast api is the web framework being used for building the backend API.
+    # It handles routing, request parsing, response formatting, and
+    # integrates with other components like authentication and database access.
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # ensures that the incoming data matches the expected structure and types for these operations.
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me")  # set a real one!
 ALGORITHM = "HS256"
@@ -52,7 +58,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 # ---------- Database ----------
 # WHat would a real database look like?
 # Would it be like Products = [api key]? or something like that?
-# 
+
+# Where are the pictures coming from? WHen i look at them there are placeholder images that dont relate
+# They might be coming from a static folder or an external image hosting service.
+# Are you using picsum to generate pictures?
+
 SAMPLE_PRODUCTS = [
     ("Waterproof Hiking Boots", "Insulated boots for cold, wet trails", "footwear", "TrailCo", 89.99, 4.5),
     ("Trail Running Shoes", "Lightweight shoes with grippy soles", "footwear", "SprintX", 74.50, 4.3),
@@ -134,6 +144,8 @@ def get_db():
 # ---------- Schemas ----------
 
 #Create requirements for API requests and responses
+#Used to format and validate the structure of API requests and responses
+#Pydantic will automatically convert the request body to the appropriate Python types and validate it.
 class SignupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
@@ -146,6 +158,10 @@ class ProjectCreate(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+class ResetPasswordRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    new_password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
 
 
 # ---------- Auth helpers ----------
@@ -525,3 +541,48 @@ def remove_project_item(
     )
     db.commit()
     return {"message": "Removed"}
+
+# Account recovery section
+# Function to check if a username exists in the users table of shop.db
+def username_exists(username):
+    conn = sqlite3.connect("shop.db")
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (username,)
+    )
+
+    user = cursor.fetchone()
+    conn.close()
+
+    return user is not None
+
+# Endpoint to check if a username exists
+@app.get("/check-username/{username}")
+def check_username(username: str):
+    if not username_exists(username):
+        raise HTTPException(
+            status_code=404,
+            detail="Username not found"
+        )
+
+    return {"exists": True}
+
+# Endpoint for resetting a user's password
+@app.post("/reset-password")
+def reset_password_endpoint(
+    request: ResetPasswordRequest, # The request body containing the username and new password
+    db: sqlite3.Connection = Depends(get_db), # The database connection, injected by FastAPI's dependency system
+):
+    # Check if the username exists before attempting to reset the password
+    if not username_exists(request.username):
+        raise HTTPException(status_code=404, detail="Username not found")
+
+    # Sets password_hash in user table to new password hash
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (hash_password(request.new_password), request.username)
+    )
+    db.commit()
+    return {"message": "Password reset successfully"}

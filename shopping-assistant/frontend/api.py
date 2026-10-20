@@ -34,6 +34,27 @@ def login(username, password):
         return True, ""
     return False, "Invalid username or password"
 
+def check_username(username):
+    try:
+        r = requests.get(f"{API}/check-username/{username}", timeout=5)
+    except requests.ConnectionError:
+        return False, "Can't reach the backend. Is uvicorn running?"
+    if r.status_code == 404:
+        return False, "Username not found"
+    if r.ok:
+        return True, "Username exists"
+    return False, f"Check failed ({r.status_code})"
+
+#I get reset failed 422 why?
+# reset failed (500)
+def reset_password(username, new_password):
+    try:
+        r = requests.post(f"{API}/reset-password", json={"username": username, "new_password": new_password}, timeout=10)
+    except requests.ConnectionError:
+        return False, "Can't reach the backend. Is uvicorn running?"
+    if r.ok:
+        return True, "Password reset successfully"
+    return False, f"Reset failed ({r.status_code})"
 
 def logout():
     for key in ("token", "username", "messages"):

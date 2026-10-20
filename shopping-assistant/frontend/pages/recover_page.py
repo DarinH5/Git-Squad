@@ -1,52 +1,88 @@
 #Need to make this work
 
 import streamlit as st
-def email_entered():
-    # Validate that the recovery email fields match before continuing.
-    email = st.session_state.email
-    confirm_email = st.session_state.confirm_email
+import requests
+import api
 
-    if (email == confirm_email):
-        st.success("Emails match!")
-    else:
-        st.error("Emails do not match!")
-    #return st.text_input("Email/Username?", placeholder="example@example.com")
+# Sets page to confirm recovery username automatically
+if "recovery_username" not in st.session_state:
+    st.session_state.recovery_username = None
 
-st.markdown("""
-    <style>
-        .recover_title {
-            text-align: center;
-            font-size: 4rem !important;
-        }
-    div[data-testid="stTextInput"] label{
-        display: block !important;
-        text-align: center !important;
-    }
 
-    div[data-testid="stTextInput"] input {
-        text-align: center !important;
-    }
-    </style>
 
-<h1 class = "recover_title">
-    Recover Password
-</h1>
-""", unsafe_allow_html=True)
+def show_recover_page():
+    st.title("Confirm Username")
+    username = st.text_input(
+        "Username?",
+        placeholder="your_username",
+        key="recover_username"
+    )
 
-email = st.text_input("Email/Username?", 
-                        placeholder="example@example.com",
-                        key="email")
-confirm_email = st.text_input("Confirm Email/Username?", 
-                                placeholder="example@example.com",
-                                key="confirm_email",
-                                on_change = email_entered)    
+    confirm_username = st.text_input(
+        "Confirm username",
+        placeholder="your_username",
+        key="confirm_recover_username"
+    )
+    if st.button("Continue"):
+        if not username or not confirm_username:
+            st.error("Please fill in both fields.")
 
-col1, col2, col3 = st.columns([1, 1, 1])
-with col2:
-    if st.button("Send Reset Link"):
-        # Handle password reset logic here
-        st.write("Reset link sent to your email.")
-        pass
+        elif username != confirm_username:
+            st.error("Usernames do not match.")
+
+        else:
+            try:
+                response = api.check_username(username)
+
+                if not response[0]:
+                    st.error(response[1])
+
+                else:
+                    st.session_state.recovery_username = username
+                    st.success("Username verified!")
+                    st.rerun()
+            except requests.RequestException:
+                st.error("Could not connect to the backend.")
     if st.button("Back to Login"):
-        st.session_state.page = "login_page"
+        st.switch_page("pages/login_page.py")
         st.rerun()
+
+#I get reset failed 422 why?
+def reset_password(username):
+    st.title("Reset Password")
+    new_password = st.text_input(
+        "New Password",
+        type="password",
+        key="new_password"
+    )
+    confirm_password = st.text_input(
+        "Confirm New Password",
+        type="password",
+        key="confirm_new_password"
+    )
+    if st.button("Reset Password"):
+        if not new_password or not confirm_password:
+            st.error("Please fill in both fields.")
+        elif new_password != confirm_password:
+            st.error("Passwords do not match.")
+        else:
+            try:
+                response = api.reset_password(username, new_password)
+                if not response[0]:
+                    st.error(response[1])
+                else:
+                    st.success("Password reset successfully!")
+                    st.session_state.recovery_username = None
+                    st.switch_page("pages/login_page.py")
+                    st.rerun()
+            except requests.RequestException:
+                st.error("Could not connect to the backend.")
+    if st.button("Back to Login"):
+        st.switch_page("pages/login_page.py")
+        st.rerun()
+
+# Determines what page to show
+if st.session_state.recovery_username is None:
+    show_recover_page()
+else:
+    reset_password(st.session_state.recovery_username)
