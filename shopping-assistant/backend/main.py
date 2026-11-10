@@ -21,16 +21,19 @@ from google.genai import errors
 
 import bcrypt
 import jwt
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+
+load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-for-local-development-only")
 
 ALGORITHM = "HS256"
 TOKEN_MINUTES = 60
-DB_PATH = "shop.db"
+DB_PATH = os.getenv("DB_PATH") or str(Path(__file__).resolve().parent / "shop.db")
 
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -41,7 +44,19 @@ gemini_client = (
     else None
 )
 
-app = FastAPI(title="Shopping Assistant API")
+app = FastAPI(
+    title="Shopwise AI API",
+    description="Authenticated shopping search, profile personalization, and orchestrated shopping agents.",
+    version="1.0.0",
+)
+allowed_origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501").split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
@@ -76,6 +91,21 @@ def init_db():
         user_columns = [row[1] for row in conn.execute("PRAGMA table_info(users)")]
         if "recovery_hash" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN recovery_hash BLOB")
+        # Profile fields are added in-place so existing accounts/databases keep working.
+        profile_columns = {
+            "display_name": "TEXT NOT NULL DEFAULT ''",
+            "budget_min": "REAL",
+            "budget_max": "REAL",
+            "preferred_categories": "TEXT NOT NULL DEFAULT '[]'",
+            "preferred_brands": "TEXT NOT NULL DEFAULT '[]'",
+            "avoided_brands": "TEXT NOT NULL DEFAULT '[]'",
+            "interests": "TEXT NOT NULL DEFAULT ''",
+            "preferred_retailers": "TEXT NOT NULL DEFAULT '[]'",
+            "profile_notes": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, definition in profile_columns.items():
+            if column not in user_columns:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY,
@@ -163,6 +193,18 @@ class AISearchRequest(BaseModel):
     limit: int = Field(default=12, ge=1, le=50)
 
 
+class ProfileUpdate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=80)
+    budget_min: Optional[float] = Field(default=None, ge=0, le=1000000)
+    budget_max: Optional[float] = Field(default=None, ge=0, le=1000000)
+    preferred_categories: Optional[list[str]] = Field(default=None, max_length=20)
+    preferred_brands: Optional[list[str]] = Field(default=None, max_length=30)
+    avoided_brands: Optional[list[str]] = Field(default=None, max_length=30)
+    interests: Optional[str] = Field(default=None, max_length=500)
+    preferred_retailers: Optional[list[str]] = Field(default=None, max_length=30)
+    profile_notes: Optional[str] = Field(default=None, max_length=500)
+
+
 # ---------- Auth helpers ----------
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
@@ -239,6 +281,11 @@ def get_current_user(
 
 
 # ---------- Routes ----------
+@app.get("/health", tags=["system"])
+def health():
+    return {"status": "ok", "service": "shopwise-ai"}
+
+
 @app.post("/signup", status_code=201)
 def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
     ensure_bcrypt_safe(body.password)
@@ -269,8 +316,142 @@ def login(
 
 
 @app.get("/me")
-def me(user: dict = Depends(get_current_user)):
-    return user
+def me(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    row = db.execute(
+        "SELECT id, username, display_name, budget_min, budget_max, preferred_categories, "
+        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes "
+        "FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()
+    return serialize_profile(row)
+
+
+def serialize_profile(row):
+    data = dict(row)
+    for key in ("preferred_categories", "preferred_brands", "avoided_brands", "preferred_retailers"):
+        try:
+            data[key] = json.loads(data.get(key) or "[]")
+        except (TypeError, json.JSONDecodeError):
+            data[key] = []
+    return data
+
+
+@app.get("/me/profile")
+def get_profile(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    row = db.execute(
+        "SELECT id, username, display_name, budget_min, budget_max, preferred_categories, "
+        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes "
+        "FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()
+    return serialize_profile(row)
+
+
+@app.patch("/me/profile")
+def update_profile(
+    body: ProfileUpdate,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    values = body.model_dump(exclude_unset=True)
+    if "budget_min" in values and "budget_max" in values:
+        if values["budget_min"] is not None and values["budget_max"] is not None and values["budget_min"] > values["budget_max"]:
+            raise HTTPException(status_code=422, detail="Minimum budget cannot exceed maximum budget.")
+    list_fields = {"preferred_categories", "preferred_brands", "avoided_brands", "preferred_retailers"}
+    updates = {}
+    for key, value in values.items():
+        if key in list_fields:
+            cleaned = []
+            for item in value or []:
+                item = str(item).strip()[:80]
+                if item and item.lower() not in {x.lower() for x in cleaned}:
+                    cleaned.append(item)
+            updates[key] = json.dumps(cleaned)
+        elif isinstance(value, str):
+            updates[key] = value.strip()
+        else:
+            updates[key] = value
+    if "budget_min" in updates and "budget_max" not in updates:
+        current = db.execute("SELECT budget_max FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if updates["budget_min"] is not None and current["budget_max"] is not None and updates["budget_min"] > current["budget_max"]:
+            raise HTTPException(status_code=422, detail="Minimum budget cannot exceed your saved maximum.")
+    if "budget_max" in updates and "budget_min" not in updates:
+        current = db.execute("SELECT budget_min FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if updates["budget_max"] is not None and current["budget_min"] is not None and updates["budget_max"] < current["budget_min"]:
+            raise HTTPException(status_code=422, detail="Maximum budget cannot be below your saved minimum.")
+    if updates:
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        db.execute(f"UPDATE users SET {assignments} WHERE id = ?", (*updates.values(), user["id"]))
+        db.commit()
+    return get_profile(user, db)
+
+
+def get_shopping_profile(db, user_id):
+    row = db.execute(
+        "SELECT budget_min, budget_max, preferred_categories, preferred_brands, avoided_brands, "
+        "interests, preferred_retailers, profile_notes FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    if not row:
+        return {}
+    data = dict(row)
+    for key in ("preferred_categories", "preferred_brands", "avoided_brands", "preferred_retailers"):
+        try:
+            data[key] = json.loads(data.get(key) or "[]")
+        except (TypeError, json.JSONDecodeError):
+            data[key] = []
+    return data
+
+
+def personalize_products(products, profile):
+    """Apply explainable profile signals without hiding otherwise relevant matches."""
+    preferred_categories = {x.casefold() for x in profile.get("preferred_categories", [])}
+    preferred_brands = {x.casefold() for x in profile.get("preferred_brands", [])}
+    avoided_brands = {x.casefold() for x in profile.get("avoided_brands", [])}
+    preferred_retailers = {x.casefold() for x in profile.get("preferred_retailers", [])}
+    interest_terms = [x.casefold() for x in re.findall(r"[A-Za-z0-9]+", " ".join([
+        profile.get("interests", ""), profile.get("profile_notes", "")
+    ])) if len(x) > 3]
+    low, high = profile.get("budget_min"), profile.get("budget_max")
+    for product in products:
+        score, reasons = 0, []
+        category = str(product.get("category") or "").casefold()
+        brand = str(product.get("brand") or "").casefold()
+        retailer = str(product.get("retailer") or "").casefold()
+        price = product.get("price")
+        if category and category in preferred_categories:
+            score += 12
+            reasons.append("Matches a category in your profile")
+        if brand and brand in preferred_brands:
+            score += 15
+            reasons.append("From one of your preferred brands")
+        if brand and brand in avoided_brands:
+            score -= 25
+            reasons.append("Brand is on your avoid list")
+        if retailer and any(retailer == x or retailer.endswith("." + x) for x in preferred_retailers):
+            score += 8
+            reasons.append("Matches a preferred retailer")
+        if price is not None and high is not None:
+            if price <= high:
+                score += 8
+                reasons.append("Within your saved budget")
+            else:
+                score -= 12
+                reasons.append("Above your saved maximum budget")
+        if price is not None and low is not None and price < low:
+            score -= 2
+        searchable = " ".join(str(product.get(k) or "") for k in ("title", "description", "category", "brand")).casefold()
+        matched_interests = [term for term in set(interest_terms) if term in searchable]
+        if matched_interests:
+            score += min(8, len(matched_interests) * 2)
+            reasons.append("Matches interests in your profile")
+        product["personalization_score"] = score
+        product["personalization_reasons"] = reasons
+        product["recommendation_score"] = max(0, min(100, int(product.get("rating", 0) * 10 + score)))
+    products.sort(key=lambda x: (x.get("personalization_score", 0), x.get("rating") or 0), reverse=True)
+    return products
+
+
+@app.get("/me/preferences")
+def get_preferences(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    return get_shopping_profile(db, user["id"])
 
 
 # Change password while logged in. Needs the current password, so a stolen session can't lock you out.
@@ -483,7 +664,7 @@ def interpret_search_query(query, categories):
 
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-3.8-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
             config={
                 "response_mime_type": "application/json"
@@ -529,15 +710,21 @@ def interpret_search_query(query, categories):
 
 @app.get("/search")
 def search(
-    q: str = "",
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
-    category: Optional[str] = None,
-    limit: int = 12,
+    q: str = Query(default="", max_length=500),
+    min_price: Optional[float] = Query(default=None, ge=0),
+    max_price: Optional[float] = Query(default=None, ge=0),
+    category: Optional[str] = Query(default=None, max_length=80),
+    limit: int = Query(default=12, ge=1, le=50),
     user: dict = Depends(get_current_user),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    return search_products(db, q, min_price, max_price, category, limit)
+    profile = get_shopping_profile(db, user["id"])
+    _, _, query_min, query_max = parse_search(q)
+    effective_min = min_price if min_price is not None else (query_min if query_min is not None else profile.get("budget_min"))
+    effective_max = max_price if max_price is not None else (query_max if query_max is not None else profile.get("budget_max"))
+    result = search_products(db, q, effective_min, effective_max, category, limit)
+    result["results"] = personalize_products(result["results"], profile)
+    return result
 
 
 @app.get("/categories")
@@ -613,6 +800,8 @@ def ai_search(
         limit=body.limit
     )
 
+    profile = get_shopping_profile(db, user["id"])
+    ranked = personalize_products(results["results"], profile)
     return {
         "query": body.query,
         "interpretation": filters.get("explanation", ""),
@@ -622,7 +811,66 @@ def ai_search(
             "max_price": max_price,
             "category": category
         },
-        "results": results["results"]
+        "agents": [
+            {"name": "Shopping Intent Agent", "status": "complete", "task": "Extracted product keywords, category, and budget."},
+            {"name": "Profile Agent", "status": "complete", "task": "Applied saved shopping preferences."},
+            {"name": "Recommendation Agent", "status": "complete", "task": "Ranked matching products and generated explanations."}
+        ],
+        "personalized": bool(any(profile.get(k) for k in ("preferred_categories", "preferred_brands", "avoided_brands", "budget_min", "budget_max", "preferred_retailers", "interests", "profile_notes"))),
+        "results": ranked
+    }
+
+
+@app.post("/agents/shop")
+def agent_shop(
+    body: AISearchRequest,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Orchestrated shopping workflow: interpret -> retrieve -> personalize -> recommend."""
+    category_rows = db.execute("SELECT DISTINCT category FROM products ORDER BY category").fetchall()
+    categories = [r["category"] for r in category_rows if r["category"]]
+    profile = get_shopping_profile(db, user["id"])
+    if gemini_client:
+        try:
+            filters = interpret_search_query(body.query, categories)
+            keywords = filters.get("keywords") if isinstance(filters.get("keywords"), str) else body.query
+            category = filters.get("category") if filters.get("category") in categories else None
+            try:
+                low = float(filters["min_price"]) if filters.get("min_price") is not None else None
+                high = float(filters["max_price"]) if filters.get("max_price") is not None else None
+            except (ValueError, TypeError):
+                low, high = None, None
+            explanation = filters.get("explanation") or "I interpreted your request and ranked products using your preferences."
+        except HTTPException:
+            words, shown, low, high = parse_search(body.query)
+            keywords = " ".join(shown) or body.query
+            category = None
+            explanation = "Gemini was unavailable, so I used the built-in shopping intent parser and your saved preferences."
+    else:
+        words, shown, low, high = parse_search(body.query)
+        keywords = " ".join(shown) or body.query
+        category = None
+        explanation = "I used the built-in shopping intent parser and your saved preferences. Add a Gemini API key to enable natural-language AI interpretation."
+    if profile.get("budget_min") is not None:
+        low = max(low or 0, profile["budget_min"])
+    if profile.get("budget_max") is not None:
+        high = min(high, profile["budget_max"]) if high is not None else profile["budget_max"]
+    found = search_products(db, keywords, low, high, category, body.limit)
+    ranked = personalize_products(found["results"], profile)
+    active = any(profile.get(k) for k in ("preferred_categories", "preferred_brands", "avoided_brands", "preferred_retailers", "budget_min", "budget_max", "interests", "profile_notes"))
+    return {
+        "query": body.query,
+        "interpretation": explanation,
+        "applied": {"keywords": keywords, "min_price": low, "max_price": high, "category": category},
+        "personalized": active,
+        "agents": [
+            {"name": "Intent Agent", "status": "complete", "task": "Understood the product request and budget."},
+            {"name": "Profile Agent", "status": "complete", "task": "Applied the user's saved preferences." if active else "No saved preferences yet; used request details only."},
+            {"name": "Product Research Agent", "status": "complete", "task": "Retrieved matching products from the catalog."},
+            {"name": "Ranking Agent", "status": "complete", "task": "Ranked products with explainable preference signals."}
+        ],
+        "results": ranked
     }
 
 

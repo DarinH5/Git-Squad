@@ -1,14 +1,15 @@
 """All calls to the FastAPI backend live here so pages stay clean."""
+import os
 import requests
 import streamlit as st
 
-API = "http://localhost:8000"
+API = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 def signup(username, password):
     """Returns (ok, message, recovery_code). The code is only returned on success."""
     try:
-        r = requests.post(f"{API}/signup", json={"username": username, "password": password}, timeout=10)
+        r = requests.post(f"{API}/signup", json={"username": username, "password": password}, timeout=45)
     except requests.ConnectionError:
         return False, "Can't reach the backend. Is uvicorn running?", None
     if r.status_code == 201:
@@ -43,7 +44,7 @@ def login(username, password):
     """Returns (ok, message). On success, sets the session state flags."""
     try:
         # Login uses form encoding (data=), not json=
-        r = requests.post(f"{API}/login", data={"username": username, "password": password}, timeout=10)
+        r = requests.post(f"{API}/login", data={"username": username, "password": password}, timeout=45)
     except requests.ConnectionError:
         return False, "Can't reach the backend. Is uvicorn running?"
     if r.ok:
@@ -105,3 +106,17 @@ def new_recovery_code(password):
     if r.ok:
         return True, r.json()["recovery_code"]
     return False, "Password is incorrect" if r.status_code == 400 else f"Failed ({r.status_code})"
+
+
+def update_profile(**fields):
+    """Update only the profile fields supplied by the caller."""
+    return _request("PATCH", "/me/profile", body=fields)
+
+
+def shop_with_agents(query, limit=12):
+    """Run the embedded multi-agent shopping workflow."""
+    return post("/agents/shop", body={"query": query, "limit": limit})
+
+
+def get_profile():
+    return get("/me/profile")

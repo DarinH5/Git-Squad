@@ -14,32 +14,41 @@ UT_WHITE = "#FFFFFF"
 
 DARK_CSS = """
 <style>
-    .stApp { background-color: #2e383d !important; color: white !important; }
-    [data-testid="stSidebar"] { background-color: #1B262C !important; }
-    h1, h2, h3, p, label { color: white !important; }
+:root { --accent: #8b9cf7; }
+.stApp { background: #0b1020; color: #e8ecf8; }
+[data-testid="stSidebar"] { background: #10182b; border-right: 1px solid #26314b; }
+h1,h2,h3 { color: #f4f6ff !important; letter-spacing: -0.025em; }
+p, label, .stMarkdown { color: #d5dcef; }
+[data-testid="stMetric"] { background: #151f35; border: 1px solid #2b3857; padding: 14px; border-radius: 14px; }
+div[data-testid="stVerticalBlockBorderWrapper"] { border-color: #2b3857 !important; border-radius: 16px; }
+.stButton > button, .stFormSubmitButton > button { border-radius: 10px; border: 1px solid #3c4c73; }
+.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] { background: #6578e8; color: white; border: 0; }
+[data-testid="stChatMessage"] { background: #121b30; border: 1px solid #25324e; border-radius: 16px; }
 </style>
 """
 
 LIGHT_CSS = """
 <style>
-    .stApp { background-color: #ceedfd !important; color: #889297 !important; }
-    [data-testid="stSidebar"] { background-color: #9dd8f6 !important; }
-    h1, h2, h3, p, label { color: #889297 !important; }
+.stApp { background: #f5f7fc; color: #182238; }
+[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e4e9f2; }
+h1,h2,h3 { color: #182238 !important; letter-spacing: -0.025em; }
+p,label { color: #3c4961; }
+[data-testid="stMetric"] { background: white; border: 1px solid #e4e9f2; padding: 14px; border-radius: 14px; }
+div[data-testid="stVerticalBlockBorderWrapper"] { border-color: #e1e7f0 !important; border-radius: 16px; }
+.stButton > button, .stFormSubmitButton > button { border-radius: 10px; }
+[data-testid="stChatMessage"] { background: white; border: 1px solid #e4e9f2; border-radius: 16px; }
 </style>
 """
 
-UT_CSS = f"""
+UT_CSS = """
 <style>
-    .stApp {{ background-color: {UT_WHITE} !important; color: {UT_ORANGE} !important; }}
-    [data-testid="stSidebar"] {{ background-color: {UT_WHITE} !important; }}
-    [data-testid="stSidebar"] .stButton > button {{ background-color: {UT_LIGHT_GREY} !important; color: {UT_ORANGE} !important; }}
-    h1, h2, h3, p, label {{ color: {UT_ORANGE} !important; }}
-    [data-testid="stPopoverBody"] {{ background-color: {UT_WHITE} !important;
-                                    color: {UT_ORANGE} !important; }}
-    [data-testid="stPopoverButton"] {{ background-color: {UT_LIGHT_GREY} !important; color: {UT_ORANGE} !important; }}
-    [data-testid="stTextInput"] input {{ background-color: {UT_LIGHT_GREY} !important; color: {UT_ORANGE} !important; outline: none !important; }}
-    [data-testid="stTextInput"] input::placeholder {{ color: {UT_LIGHT_ORANGE} !important; }}
-    [data-testid="st-emotion-cache-1tw7gkw"] {{background-color: none !important; }}
+.stApp { background: #fffaf4; color: #262626; }
+[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #f0dfce; }
+h1,h2,h3 { color: #252525 !important; letter-spacing: -0.025em; }
+[data-testid="stMetric"] { background: white; border: 1px solid #f0dfce; padding: 14px; border-radius: 14px; }
+div[data-testid="stVerticalBlockBorderWrapper"] { border-color: #f0dfce !important; border-radius: 16px; }
+.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] { background: #ff8200; color: white; border: 0; }
+[data-testid="stChatMessage"] { background: white; border: 1px solid #f0dfce; border-radius: 16px; }
 </style>
 """
 
@@ -158,9 +167,17 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
                     st.image(p["image_url"])
                 st.markdown(f"**{p['title']}**")
                 st.caption(f"{p.get('brand') or ''} · {p.get('category') or ''}")
-                st.write(f"**${p['price']:.2f}**  ·  ⭐ {p['rating']}")
+                price = p.get("price")
+                rating = p.get("rating")
+                st.write(f"**${price:,.2f}**" if isinstance(price, (int, float)) else "**Price unavailable**")
+                if rating is not None:
+                    st.caption(f"⭐ {rating}/5")
+                if p.get("personalization_reasons"):
+                    st.caption(" · ".join(p["personalization_reasons"]))
                 if p.get("description"):
                     st.write(p["description"])
+                if p.get("product_url"):
+                    st.markdown(f"[View product ↗]({p['product_url']})")
  
                 b1, b2 = st.columns(2)
                 with b1:
