@@ -147,7 +147,8 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
         pr = api.get("/projects")
         projects = pr.json() if pr.ok else []
     project_names = {p["id"]: p["name"] for p in projects}
- 
+
+
     for start in range(0, len(products), per_row):
         row = products[start:start + per_row]
         cols = st.columns(per_row)  # always per_row columns so the last row stays aligned
@@ -181,4 +182,13 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
                         if st.button("Remove", key=f"premove_{key_prefix}_{p['id']}"):
                             api.delete(f"/projects/{project_id}/items/{p['id']}")
                             st.rerun()
+
+def show_recovery_code(code, button_key):
+    """Display the code until the user confirms they saved it. Returns True once dismissed."""
+    st.warning("Save your recovery code now. It's the only way to reset your password if you forget it, "
+               "and it won't be shown again.")
+    st.code(code, language=None)
+    if st.button("I've saved it", key=button_key):
+        return True
+    return False
 

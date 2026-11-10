@@ -1,90 +1,41 @@
-#Home Page
-#Where users will search for products they want
-
-#Stuff to do:
-#Setting bar: maybe change theme from there
-#Search/Chat bar for the ai agent
-#Implement sidebar for navigation
-#Create logo
-
-#import streamlit as st
-
-#Blurred this code out so I could get basic app functionality done.
-#In sprint 3, we will need to connect chatbot to home page so it can parse the 
-# search input and provide relevant responses.
-"""def open_chatbot() -> None:
-	# Pass the home-page search text to the chatbot page.
-    prompt = st.session_state.home_search.strip()
-    if prompt:
-        st.session_state.pending_chat_prompt = prompt
-        st.session_state.scroll_to_latest_search = True
-        st.switch_page("pages/chatbot_page.py")
-
-
-col1, col2, col3 = st.columns([1,1,1])
-with col2:
-    st.image("images/shopping_cart.png", width = "content")
-
-st.markdown(""a
-    <div style="
-        text-align: center;
-        font-size: 2.5rem;
-        font-weight: bold;
-        ">
-        Welcome to the Shopping Assistant Website
-    </div>
-""a, unsafe_allow_html=True)
-st.text_input(
-    "Search for products",
-    placeholder="Enter product name",
-    key="home_search",
-    on_change=open_chatbot,
-)
-"""
-
 import streamlit as st
- 
+
 import api
 from components import product_cards
- 
-st.title(f"Welcome, {st.session_state.username}!")
-st.write("Search for a product by name, category, or price.")
- 
-query = st.text_input(
-    "Search",
-    key="home_query",
-    placeholder="e.g. waterproof boots under $100",
-    label_visibility="collapsed",
-)
-st.caption("Still a work in progress.")
-st.caption("Try: **boots**, **jackets under $100**, **between $50 and $80**, **backpack over 60**, **$30**")
- 
-# The text box keeps its value across reruns, so results stay on screen after clicking a card's buttons
 
-# Perform the search if the query is not empty.
-if query.strip():
+st.title("Shopping Assistant")
+st.caption("Describe what you want in your own words, like “something warm for winter hikes under $100”.")
 
-    # Call the backend search API with the query and limit.
-    r = api.get("/search", q=query, limit=9)
-    if not r.ok:
-        st.error(f"Search failed ({r.status_code})")
-    else:
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-        # Get the JSON data from the response.
-        # applied contains the filters that were applied to the search, including text, min_price, and max_price.
-        data = r.json()
-        applied = data["applied"]
- 
-        # Tell the user how their search was understood
-        # example: "Showing 3 results: “waterproof boots”, from $50, up to $100"
-        parts = []
-        if applied["text"]:
-            parts.append(f"“{applied['text']}”")
-        if applied["min_price"] is not None:
-            parts.append(f"from ${applied['min_price']:,.2f}")
-        if applied["max_price"] is not None:
-            parts.append(f"up to ${applied['max_price']:,.2f}")
-        count = len(data["results"])
-        st.caption(f"Showing {count} result{'s' if count != 1 else ''}" + (": " + ", ".join(parts) if parts else ""))
- 
-        product_cards(data["results"], key_prefix="home")
+# Streamlit reruns the script on every interaction, so redraw the whole history
+for i, msg in enumerate(st.session_state.messages):
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
+        if msg.get("products") is not None:
+            product_cards(msg["products"], key_prefix=f"chat{i}")
+
+if query := st.chat_input("What are you looking for?"):
+    st.session_state.messages.append({"role": "user", "content": query})
+
+    with st.spinner("Looking..."):
+        r = api.post("/ai-search", body={"query": query, "limit": 3})
+        if r.ok:
+            data = r.json()
+            products = data["results"]
+            note = data.get("interpretation") or ""
+            reply = note if products and note else (
+                f"Here are {len(products)} matches." if products else "I couldn't find anything matching that."
+            )
+        elif r.status_code >= 500:
+            # The AI isn't available (no API key, or Gemini had a problem): fall back to keyword search
+            r = api.get("/search", q=query, limit=3)
+            products = r.json()["results"] if r.ok else []
+            reply = ("The AI assistant isn't available right now, so this is a basic keyword search."
+                     if products else "The AI assistant isn't available, and the keyword search found nothing.")
+        else:
+            reply, products = f"Something went wrong ({r.status_code}).", None
+
+    st.session_state.messages.append({"role": "assistant", "content": reply, "products": products})
+    st.rerun()

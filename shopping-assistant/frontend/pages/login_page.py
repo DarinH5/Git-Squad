@@ -1,7 +1,7 @@
-#Login Page Maybe might need this later when login is more complex
 import streamlit as st
 
 import api
+from components import show_recovery_code
 
 st.markdown("""
     <style>
@@ -22,11 +22,9 @@ with col2:
     login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
 
     with login_tab:
-        with st.form("login_form"):
-            username = st.text_input("Username", key="li_user")
-            password = st.text_input("Password", type="password", key="li_pw")
-            submitted = st.form_submit_button("Press to Login")
-        if submitted:
+        username = st.text_input("Username", key="li_user")
+        password = st.text_input("Password", type="password", key="li_pw")
+        if st.button("Press to Login"):
             ok, msg = api.login(username, password)
             if ok:
                 st.rerun()  # app.py reruns and now shows the sidebar navigation
@@ -36,17 +34,19 @@ with col2:
             st.switch_page("pages/recover_page.py")
 
     with signup_tab:
-        with st.form("signup_form"):
+        # After a successful signup, keep showing the recovery code until the user confirms
+        if st.session_state.get("recovery_to_show"):
+            st.success("Account created! Now log in from the other tab.")
+            if show_recovery_code(st.session_state.recovery_to_show, "dismiss_signup_code"):
+                del st.session_state["recovery_to_show"]
+                st.rerun()
+        else:
             new_user = st.text_input("Choose a username", key="su_user")
             new_pw = st.text_input("Choose a password (8+ characters)", type="password", key="su_pw")
-            confirm_pw = st.text_input("Confirm password", type="password", key="su_confirm_pw")
-            submitted = st.form_submit_button("Create account")
-        if submitted:
-            if new_pw != confirm_pw:
-                st.error("Passwords do not match.")
-            else:
-                ok, msg = api.signup(new_user, new_pw)
+            if st.button("Create account"):
+                ok, msg, code = api.signup(new_user, new_pw)
                 if ok:
-                    st.success("Account created! Now log in from the other tab.")
+                    st.session_state.recovery_to_show = code
+                    st.rerun()
                 else:
                     st.error(msg)

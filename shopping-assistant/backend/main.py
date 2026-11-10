@@ -5,64 +5,47 @@ Install:  pip install fastapi uvicorn pyjwt bcrypt python-multipart
 Run:      SECRET_KEY="long-random-string" uvicorn main:app --reload
 Docs:     http://localhost:8000/docs  (you can test signup/login here)
 """
-
-#What is my backend framework?
-# FastAPI is being used as the backend framework.
-# What is my database?
-# SQLite is being used as the database.
-# How does Sqlite work?
-# SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine.
-# It stores the entire database as a single file on disk and allows access through SQL queries.
-
-# Does this work because this website doesn't really have users interact with others? Whereas like if I could view
-# some elses profile, I would need to do something else?
-# In this case, since users are mostly interacting with products and 
-# their own projects, the current setup is sufficient.
-# Once I get an api with shopping products can sqlite handle that?
-# SQLite can handle a moderate amount of traffic and data, 
-# but for very high traffic or large datasets, a more robust database like PostgreSQL might be needed.
-#How much would that change code?
-# Switching from SQLite to PostgreSQL would mainly involve changing the database connection setup and SQL syntax where necessary.
-# You might also use an ORM like SQLAlchemy to make the transition smoother and database-agnostic.
-# FOr now though, sqlite is sufficient?
-
-#Steamlit is the frontend framework being used 
-# for building the user interface of the shopping assistant website.
-# Its a python library that allows for the creation of 
-# interactive web applications directly from Python code.
-
 import os
+import re
+import secrets
 import sqlite3
 import datetime as dt
 from typing import Optional
 
+import json
+from pathlib import Path
+from dotenv import load_dotenv
+from google import genai
+from google.genai import errors
+
+
 import bcrypt
-import re 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, status
-    #Fast api is the web framework being used for building the backend API.
-    # It handles routing, request parsing, response formatting, and
-    # integrates with other components like authentication and database access.
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field  # ensures that the incoming data matches the expected structure and types for these operations.
+from pydantic import BaseModel, Field
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me")  # set a real one!
+
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-for-local-development-only")
+
 ALGORITHM = "HS256"
 TOKEN_MINUTES = 60
 DB_PATH = "shop.db"
+
+# Initialize Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+gemini_client = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY
+    else None
+)
 
 app = FastAPI(title="Shopping Assistant API")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
 # ---------- Database ----------
-# WHat would a real database look like?
-# Would it be like Products = [api key]? or something like that?
-
-# Where are the pictures coming from? WHen i look at them there are placeholder images that dont relate
-# They might be coming from a static folder or an external image hosting service.
-# Are you using picsum to generate pictures?
-
 SAMPLE_PRODUCTS = [
     ("Waterproof Hiking Boots", "Insulated boots for cold, wet trails", "footwear", "TrailCo", 89.99, 4.5),
     ("Trail Running Shoes", "Lightweight shoes with grippy soles", "footwear", "SprintX", 74.50, 4.3),
@@ -85,9 +68,14 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                password_hash BLOB NOT NULL
+                password_hash BLOB NOT NULL,
+                recovery_hash BLOB
             )"""
         )
+        # Older databases were created without recovery_hash, so add it if it's missing
+        user_columns = [row[1] for row in conn.execute("PRAGMA table_info(users)")]
+        if "recovery_hash" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN recovery_hash BLOB")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY,
@@ -142,13 +130,24 @@ def get_db():
 
 
 # ---------- Schemas ----------
-
-#Create requirements for API requests and responses
-#Used to format and validate the structure of API requests and responses
-#Pydantic will automatically convert the request body to the appropriate Python types and validate it.
 class SignupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
+class PasswordConfirm(BaseModel):
+    password: str = Field(max_length=72)
+
+
+class RecoverRequest(BaseModel):
+    username: str = Field(max_length=32)
+    recovery_code: str = Field(max_length=64)
+    new_password: str = Field(min_length=8, max_length=72)
 
 
 class ProjectCreate(BaseModel):
@@ -159,28 +158,66 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-class ResetPasswordRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=32)
-    new_password: str = Field(min_length=8, max_length=72)  # bcrypt limit is 72 bytes
+class AISearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    limit: int = Field(default=12, ge=1, le=50)
 
 
 # ---------- Auth helpers ----------
-
-#THese are used to hash and verify passwords, and to create JWT tokens for authentication.
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
 
 def verify_password(password: str, password_hash: bytes) -> bool:
-    return bcrypt.checkpw(password.encode(), password_hash)
+    try:
+        return bcrypt.checkpw(password.encode(), password_hash)
+    except ValueError:  # e.g. a password longer than bcrypt's 72-byte limit
+        return False
+
+
+def ensure_bcrypt_safe(password: str):
+    """bcrypt only handles 72 bytes; accented or emoji characters use more than one byte each."""
+    if len(password.encode()) > 72:
+        raise HTTPException(status_code=422, detail="Password is too long")
+
+
+# ---------- Recovery codes ----------
+# Each account gets a one-time recovery code when it is created. It's shown to the user once,
+# and only a bcrypt hash of it is stored (just like a password). A production app would email
+# a reset link instead, but this works without any email setup.
+RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, which are easy to confuse
+
+
+def new_recovery_code() -> str:
+    raw = "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(16))  # about 80 bits of randomness
+    return "-".join(raw[i:i + 4] for i in range(0, 16, 4))  # e.g. K7QM-2XD9-HV4T-PB8R
+
+
+def normalize_code(code: str) -> str:
+    """Ignore case, dashes, and spaces so users can type the code any way they like."""
+    return re.sub(r"[^A-Za-z0-9]", "", code).upper()
+
+
+def hash_recovery_code(code: str) -> bytes:
+    return bcrypt.hashpw(normalize_code(code).encode(), bcrypt.gensalt())
+
+
+def verify_recovery_code(code: str, code_hash: bytes) -> bool:
+    try:
+        return bcrypt.checkpw(normalize_code(code).encode(), code_hash)
+    except ValueError:
+        return False
+
+
+# Used so a wrong username takes as long to reject as a wrong code (hides which usernames exist)
+DUMMY_HASH = bcrypt.hashpw(b"dummy", bcrypt.gensalt())
 
 
 def create_token(username: str) -> str:
     expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=TOKEN_MINUTES)
     return jwt.encode({"sub": username, "exp": expires}, SECRET_KEY, algorithm=ALGORITHM)
 
-# ---------- User helpers ----------
-# This retrieves the current user based on the JWT token provided in the Authorization header.
+
 def get_current_user(
     token: str = Depends(oauth2_scheme), db: sqlite3.Connection = Depends(get_db)
 ):
@@ -202,22 +239,22 @@ def get_current_user(
 
 
 # ---------- Routes ----------
-
-# Handles user signup and account creation.
 @app.post("/signup", status_code=201)
 def signup(body: SignupRequest, db: sqlite3.Connection = Depends(get_db)):
+    ensure_bcrypt_safe(body.password)
+    recovery_code = new_recovery_code()
     try:
         db.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (body.username, hash_password(body.password)),
+            "INSERT INTO users (username, password_hash, recovery_hash) VALUES (?, ?, ?)",
+            (body.username, hash_password(body.password), hash_recovery_code(recovery_code)),
         )
         db.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="Username already taken")
-    return {"message": "Account created"}
+    # The plain code is returned this one time only; the database keeps just its hash
+    return {"message": "Account created", "recovery_code": recovery_code}
 
-# Handles user login and returns an access token.
-# THis access token is a JWT that must be included in the Authorization header for protected routes.
+
 @app.post("/login", response_model=Token)
 def login(
     form: OAuth2PasswordRequestForm = Depends(), db: sqlite3.Connection = Depends(get_db)
@@ -230,49 +267,95 @@ def login(
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     return Token(access_token=create_token(form.username))
 
-# Will be used to get the current user's information.
+
 @app.get("/me")
 def me(user: dict = Depends(get_current_user)):
     return user
 
 
-# Used to search for products based on query, price, and category.
-# ---------- Search helpers ----------
+# Change password while logged in. Needs the current password, so a stolen session can't lock you out.
+# Returns 400 (not 401) for a wrong password, because the frontend treats 401 as "token expired".
+@app.post("/me/password")
+def change_password(
+    body: PasswordChange,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    ensure_bcrypt_safe(body.new_password)
+    row = db.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if not verify_password(body.current_password, row["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (hash_password(body.new_password), user["id"]),
+    )
+    db.commit()
+    return {"message": "Password changed"}
 
+
+# Make a fresh recovery code (also how accounts created before this feature get their first one).
+# The old code stops working.
+@app.post("/me/recovery-code")
+def regenerate_recovery_code(
+    body: PasswordConfirm,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    row = db.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if not verify_password(body.password, row["password_hash"]):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    code = new_recovery_code()
+    db.execute("UPDATE users SET recovery_hash = ? WHERE id = ?", (hash_recovery_code(code), user["id"]))
+    db.commit()
+    return {"recovery_code": code}
+
+
+# Forgot-password reset: no login needed, the recovery code proves who you are.
+# The code is single use. A new one is issued after every successful reset.
+@app.post("/recover")
+def recover_password(body: RecoverRequest, db: sqlite3.Connection = Depends(get_db)):
+    ensure_bcrypt_safe(body.new_password)
+    row = db.execute(
+        "SELECT id, recovery_hash FROM users WHERE username = ?", (body.username,)
+    ).fetchone()
+    stored = row["recovery_hash"] if row and row["recovery_hash"] else DUMMY_HASH
+    code_ok = verify_recovery_code(body.recovery_code, stored)
+    # One generic message for unknown user, no code on file, and wrong code
+    if row is None or not row["recovery_hash"] or not code_ok:
+        raise HTTPException(status_code=400, detail="Invalid username or recovery code")
+    new_code = new_recovery_code()
+    db.execute(
+        "UPDATE users SET password_hash = ?, recovery_hash = ? WHERE id = ?",
+        (hash_password(body.new_password), hash_recovery_code(new_code), row["id"]),
+    )
+    db.commit()
+    return {"message": "Password reset", "recovery_code": new_code}
+
+
+# ---------- Search helpers ----------
 # Words that carry no meaning for matching ("show me boots" -> "boots")
 FILLER_WORDS = {
     "a", "an", "the", "i", "me", "my", "some", "any", "show", "find", "get", "want", "need",
     "looking", "look", "for", "please", "something", "anything", "item", "items", "product",
     "products", "price", "priced", "cost", "costs", "costing", "dollar", "dollars", "bucks",
 }
-
-# Used to match numbers in search queries, optionally preceded by a dollar sign.
-# 1,000 or $1,000.00 become 1000.0
 _NUM = r"\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)(?![A-Za-z])"  # a number, optional $, but not "40L"
- 
-# Used to convert a matched number string into a float.
-# _NUM finds numbers in the text, optionally preceded by a dollar sign. and _num turn them into floats.
-# 1,000 -> 1000
+
+
 def _num(text):
     return float(text.replace(",", ""))
- 
-# Parses a search query into words, shown words, and price range.
+
+
 def parse_search(q: str):
     """Split a search like 'boots under $100' into (words, shown_words, min_price, max_price).
     words are used for matching (plurals trimmed); shown_words are as the user typed them.
- 
+
     Understands: under/below/less than/up to/max, over/above/more than/at least/min,
     'between 50 and 80', '$50-$80', 'around $60', a bare '$60' or '60 dollars', and a query
     that is only a number. Numbers without a $ or keyword (like '40L backpack') stay as text.
     """
-    # Initialize the text and price range variables.
-    # text holds the remaining query after extracting price information.
-    # lo and hi represent the minimum and maximum prices
     text, lo, hi = q, None, None
 
-    # This helper function searches for a pattern in the text, removes it if found, and returns the match.
-    # example: if text is "under $100 boots", take(rf"under\s*{_NUM}") 
-    # will return the match for "under $100" and remove it from text.
     def take(pattern):
         """Find a pattern, remove it from text, and return the match (or None)."""
         nonlocal text
@@ -281,108 +364,55 @@ def parse_search(q: str):
             text = text[:m.start()] + " " + text[m.end():]
         return m
 
-    # Look for a "between X and Y" or "$X-$Y" pattern to determine the price range.
     m = take(rf"\bbetween\s+{_NUM}\s*(?:and|to|-)\s*{_NUM}") or take(
         r"\$\s*(\d+(?:\.\d+)?)\s*(?:-|to)\s*\$?\s*(\d+(?:\.\d+)?)"
     )
-
-    # If a "between" or range pattern was found, set the low and high prices accordingly.
     if m:
         lo, hi = sorted((_num(m.group(1)), _num(m.group(2))))
- 
-    # Look for "under", "below", "less than", etc., to set the maximum price.
+
     m = take(rf"(?:\b(?:under|below|less than|cheaper than|up to|within|at most|max(?:imum)?)|<=?)\s*{_NUM}")
     if m:
         hi = _num(m.group(1))
-
-    # Look for "over", "above", "more than", etc., to set the minimum price.
     m = take(rf"(?:\b(?:over|above|more than|at least|min(?:imum)?)|>=?)\s*{_NUM}")
-
-    # If a minimum price pattern was found, set the low price accordingly.
     if m:
         lo = _num(m.group(1))
- 
-    # If no explicit min or max price was found, look for approximate or bare price mentions.
-    # If an approximate or bare price mention is found, set both the low and high prices around that value.
-    if lo is None and hi is None:
+
+    if lo is None and hi is None:  # "around $60", "$60", "60 dollars", or just "60"
         m = (
             take(rf"(?:\b(?:around|about|near|roughly|approximately)|~)\s*{_NUM}")
             or take(r"\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)")
             or take(r"\b(\d+(?:\.\d+)?)\s*(?:dollars?|bucks)\b")
             or (re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", text) and take(r"(\d+(?:\.\d+)?)"))
         )
-        # If a match was found, calculate the low and high prices as 75% and 125% of the target value.
         if m:
             target = _num(m.group(1))
             lo, hi = round(target * 0.75, 2), round(target * 1.25, 2)
 
-    # Return the parsed words, the words shown to the user, and the determined price range.
-    # words: the meaningful words extracted from the search text
-    # shown: the words shown to the user (including filler words)
     words, shown = [], []
-
-    # TThis loop extracts meaningful words from the search text, 
-    # ignoring filler words and handling crude plural forms.
     for w in re.findall(r"[A-Za-z0-9']+", text):
         if w.lower() in FILLER_WORDS:
             continue
         shown.append(w)
-
-        #This deals with plural forms of words, e.g., "boots" -> "boot"
-        if len(w) > 3 and w.lower().endswith("s"):
+        if len(w) > 3 and w.lower().endswith("s"):  # crude plural handling: boots -> boot
             w = w[:-1]
         words.append(w)
-
-    # Return the final list of meaningful words, the words shown to the user, and the determined price range.
     return words, shown, lo, hi
- 
- # Endpoint for searching products based on query, price range, category, and other filters.
-@app.get("/search")
-def search(
 
-    # Query parameters for the search endpoint.
-    q: str = "",
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
-    category: Optional[str] = None,
-    limit: int = 12,
-    user: dict = Depends(get_current_user),
-    db: sqlite3.Connection = Depends(get_db),
-):
-    # Parse the search query to extract meaningful words and determine a price range.
-    # Uses the parse_search function to extract meaningful words and determine a price range.
+
+def search_products(db, q="", min_price=None, max_price=None, category=None, limit=12):
+    """The one place that searches the products table. Used by /search and by the AI agent."""
     words, shown, parsed_lo, parsed_hi = parse_search(q)
-
     # Explicit parameters (from the Browse page filters) win over prices typed in the text
     lo = min_price if min_price is not None else parsed_lo
     hi = max_price if max_price is not None else parsed_hi
 
-    # Construct the SQL query based on the parsed words, price range, and category.
-    # A sql query is a string that will be executed against the database, with placeholders for parameters.
-    # args is the list of parameters that will be substituted into the SQL query placeholders.
     sql = "SELECT * FROM products WHERE 1=1"
     args = []
-
     # Every word must appear somewhere (title, description, category, brand)
-
-    # For each meaningful word, add a condition to the SQL query to 
-    # match it against title, description, category, and brand.
-
     for word in words:
-        # This takes a word such as "boot" and turns it into "%boot%" for the SQL LIKE query.
-        #like = f"%{word}%" is the pattern used for the SQL LIKE query.
-        #sql += " AND (title LIKE ? OR description LIKE ? OR category LIKE ? OR brand LIKE ?)" 
-        # is the condition added to the SQL query for this word.
-        #args += [like, like, like, like] is the list of parameters for the SQL query placeholders.
-
         like = f"%{word}%"
         sql += " AND (title LIKE ? OR description LIKE ? OR category LIKE ? OR brand LIKE ?)"
         args += [like, like, like, like]
-
-    # Add conditions for the price range and category filters to the SQL query.
-    #   If low price is specified, add a minimum price condition to the SQL query.
-    #   If high price is specified, add a maximum price condition to the SQL query.
-    #   If a category is specified, add a category condition to the SQL query.
     if lo is not None:
         sql += " AND price >= ?"
         args.append(lo)
@@ -392,34 +422,211 @@ def search(
     if category:
         sql += " AND category = ?"
         args.append(category)
-
-    # Add the ORDER BY and LIMIT clauses to the SQL query.
-    # This ensures that the results are sorted by rating in descending order 
-    # and limits the number of results returned.
     sql += " ORDER BY rating DESC LIMIT ?"
     args.append(min(limit, 50))
     rows = db.execute(sql, args).fetchall()
-
-    # Return the search results as a JSON object.
-    # The JSON object includes the original query, the applied filters, and the search results.
     return {
         "query": q,
         "applied": {"text": " ".join(shown), "min_price": lo, "max_price": hi},
         "results": [dict(r) for r in rows],
     }
 
-# Lists all product categories available in the store.
-# Used by the frontend to populate category filters.
+def interpret_search_query(query, categories):
+    """
+    Uses Gemini to interpret a user's shopping request.
+
+    Extracts:
+    - Product keywords
+    - Minimum price
+    - Maximum price
+    - Product category
+    - Explanation of the request
+    """
+
+    if gemini_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini API key is not configured."
+        )
+
+    prompt = f"""
+    You are an AI shopping assistant.
+
+    Interpret the user's shopping request and extract the information
+    needed to search a product database.
+
+    Available categories:
+    {categories}
+
+    Return ONLY a JSON object with these fields:
+
+    {{
+        "keywords": "product search keywords",
+        "min_price": null,
+        "max_price": null,
+        "category": null,
+        "explanation": "brief explanation"
+    }}
+
+    Rules:
+    - Only use categories from the available category list.
+    - Use null when no price limit is specified.
+    - Under $100 means max_price = 100.
+    - Over $50 means min_price = 50.
+    - Extract both limits when a range is specified.
+    - Keywords should describe the product, not the entire sentence.
+    - Do not invent products.
+    - Do not include price information in keywords.
+
+    User request: {query}
+    """
+
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json"
+            }
+        )
+
+        result = json.loads(response.text)
+
+        if not isinstance(result, dict):
+            raise ValueError("Gemini returned an invalid response.")
+
+        return result
+
+    except errors.APIError as e:
+        print(f"Gemini API error: {e.code} - {e.message}")
+
+        if e.code == 503:
+            raise HTTPException(
+                status_code=503,
+                detail="Gemini is temporarily unavailable. Try again shortly."
+            )
+
+        raise HTTPException(
+            status_code=502,
+            detail="There was a problem communicating with Gemini."
+        )
+
+    except (ValueError, TypeError, AttributeError) as e:
+        print("Invalid Gemini response:", e)
+
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid search interpretation."
+        )
+
+    except Exception as e:
+        print("Unexpected Gemini error:", e)
+
+        raise HTTPException(
+            status_code=500,
+            detail="The AI assistant could not interpret your request."
+        )
+
+@app.get("/search")
+def search(
+    q: str = "",
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    category: Optional[str] = None,
+    limit: int = 12,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    return search_products(db, q, min_price, max_price, category, limit)
+
+
 @app.get("/categories")
 def categories(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("SELECT DISTINCT category FROM products ORDER BY category").fetchall()
     return [r["category"] for r in rows]
 
+@app.post("/ai-search")
+def ai_search(
+    body: AISearchRequest,
+    user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    # Get categories from the database
+    category_rows = db.execute(
+        "SELECT DISTINCT category FROM products ORDER BY category"
+    ).fetchall()
+
+    categories = [
+        row["category"]
+        for row in category_rows
+        if row["category"]
+    ]
+
+    # Ask Gemini to interpret the request
+    filters = interpret_search_query(body.query, categories)
+
+    keywords = filters.get("keywords", "")
+    category = filters.get("category")
+    min_price = filters.get("min_price")
+    max_price = filters.get("max_price")
+
+    # Validate Gemini's returned values
+    if not isinstance(keywords, str):
+        raise HTTPException(
+            status_code=502,
+            detail="Invalid keywords returned by Gemini."
+        )
+
+    if category not in categories:
+        category = None
+
+    try:
+        min_price = float(min_price) if min_price is not None else None
+        max_price = float(max_price) if max_price is not None else None
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=502,
+            detail="Invalid price filters returned by Gemini."
+        )
+
+    if (
+        (min_price is not None and min_price < 0)
+        or (max_price is not None and max_price < 0)
+        or (
+            min_price is not None
+            and max_price is not None
+            and min_price > max_price
+        )
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail="Gemini returned an invalid price range."
+        )
+
+    # Use your existing search_products() function!
+    results = search_products(
+        db=db,
+        q=keywords,
+        min_price=min_price,
+        max_price=max_price,
+        category=category,
+        limit=body.limit
+    )
+
+    return {
+        "query": body.query,
+        "interpretation": filters.get("explanation", ""),
+        "applied": {
+            "keywords": keywords,
+            "min_price": min_price,
+            "max_price": max_price,
+            "category": category
+        },
+        "results": results["results"]
+    }
+
 
 # ---------- Projects (named groups of products) ----------
-
-# Helper function to get a project owned by the current user
-# Returns the project row if it exists and belongs to the current user, otherwise raises a 404 error.
 def get_owned_project(db, project_id, user_id):
     """Return the project row, or 404. Also stops users from touching each other's projects."""
     row = db.execute(
@@ -429,8 +636,7 @@ def get_owned_project(db, project_id, user_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return row
 
-# Posts a request to create a new project
-# Returns the newly created project with its ID and name.
+
 @app.post("/projects", status_code=201)
 def create_project(
     body: ProjectCreate,
@@ -444,7 +650,7 @@ def create_project(
     db.commit()
     return {"id": cur.lastrowid, "name": name}
 
-# Lists all projects owned by the current user, including item counts, total prices, and thumbnails.
+
 @app.get("/projects")
 def list_projects(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     # One row per project, with the item count and the sum of its products' prices
@@ -478,8 +684,6 @@ def list_projects(user: dict = Depends(get_current_user), db: sqlite3.Connection
     return projects
 
 
-# Deletes a project owned by the current user, including all its items.
-# Returns a message indicating the deletion status.
 @app.delete("/projects/{project_id}")
 def delete_project(
     project_id: int,
@@ -493,8 +697,6 @@ def delete_project(
     return {"message": "Project deleted"}
 
 
-# Lists all items in a specific project owned by the current user.
-# Returns the project details along with its items.
 @app.get("/projects/{project_id}/items")
 def list_project_items(
     project_id: int,
@@ -527,7 +729,7 @@ def add_project_item(
     db.commit()
     return {"message": "Added" if cur.rowcount else "Already in project"}
 
-# Project item management endpoints
+
 @app.delete("/projects/{project_id}/items/{product_id}")
 def remove_project_item(
     project_id: int,
@@ -541,48 +743,3 @@ def remove_project_item(
     )
     db.commit()
     return {"message": "Removed"}
-
-# Account recovery section
-# Function to check if a username exists in the users table of shop.db
-def username_exists(username):
-    conn = sqlite3.connect("shop.db")
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT id FROM users WHERE username = ?",
-        (username,)
-    )
-
-    user = cursor.fetchone()
-    conn.close()
-
-    return user is not None
-
-# Endpoint to check if a username exists
-@app.get("/check-username/{username}")
-def check_username(username: str):
-    if not username_exists(username):
-        raise HTTPException(
-            status_code=404,
-            detail="Username not found"
-        )
-
-    return {"exists": True}
-
-# Endpoint for resetting a user's password
-@app.post("/reset-password")
-def reset_password_endpoint(
-    request: ResetPasswordRequest, # The request body containing the username and new password
-    db: sqlite3.Connection = Depends(get_db), # The database connection, injected by FastAPI's dependency system
-):
-    # Check if the username exists before attempting to reset the password
-    if not username_exists(request.username):
-        raise HTTPException(status_code=404, detail="Username not found")
-
-    # Sets password_hash in user table to new password hash
-    db.execute(
-        "UPDATE users SET password_hash = ? WHERE username = ?",
-        (hash_password(request.new_password), request.username)
-    )
-    db.commit()
-    return {"message": "Password reset successfully"}
