@@ -3,7 +3,7 @@ import streamlit as st
 import api
 #from components import apply_theme
 
-st.set_page_config(page_title="Shopwise AI", page_icon="🛍️", layout="wide",
+st.set_page_config(page_title="Shopwise AI", layout="wide",
                    initial_sidebar_state="expanded")
 
 if "logged_in" not in st.session_state:
@@ -20,7 +20,7 @@ faq_page = st.Page("pages/faq_page.py", title="Help", icon=":material/help_outli
 
 if st.session_state.logged_in:
     with st.sidebar:
-        st.markdown("## 🛍️ Shopwise AI")
+        st.markdown("## Shopwise AI")
         st.caption("Personal shopping, powered by agents")
         st.divider()
         st.write(f"Signed in as **{st.session_state.username}**")
