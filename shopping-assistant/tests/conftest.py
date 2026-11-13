@@ -57,5 +57,3 @@ def db(test_db):
         yield conn
     finally:
         conn.close()
-
-
