@@ -6,7 +6,6 @@ import pytest
 from fastapi import HTTPException
 
 from backend import main
-from test_api import client, test_db
 
 
 @pytest.fixture

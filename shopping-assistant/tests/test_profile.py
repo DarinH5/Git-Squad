@@ -1,6 +1,5 @@
 import pytest
 
-from test_api import client, test_db
 
 
 def authenticated_client(client):
