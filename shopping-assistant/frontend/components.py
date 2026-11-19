@@ -172,6 +172,9 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
                 st.write(f"**${price:,.2f}**" if isinstance(price, (int, float)) else "**Price unavailable**")
                 if rating is not None:
                     st.caption(f"⭐ {rating}/5")
+                if p.get("recommendation_score") is not None:
+                    st.progress(max(0, min(100, int(p["recommendation_score"]))) / 100)
+                    st.caption(f"Personalized match: **{int(p['recommendation_score'])}/100**")
                 if p.get("personalization_reasons"):
                     st.caption(" · ".join(p["personalization_reasons"]))
                 if p.get("description"):

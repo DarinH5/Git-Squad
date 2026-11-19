@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: shopwise-api
+    runtime: python
+    rootDir: shopping-assistant
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    disk:
+      name: shopwise-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/shop.db
+      - key: CORS_ORIGINS
+        value: https://shopwise-frontend.onrender.com
+      - key: GEMINI_API_KEY
+        sync: false
+
+  - type: web
+    name: shopwise-frontend
+    runtime: python
+    rootDir: shopping-assistant
+    buildCommand: pip install -r frontend/requirements.txt
+    startCommand: cd frontend && streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
+    envVars:
+      - key: BACKEND_URL
+        value: https://shopwise-api.onrender.com

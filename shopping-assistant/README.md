@@ -1,17 +1,27 @@
 # Shopwise AI — GitSquad Shopping Assistant
 
-A personalized AI shopping assistant built with **Streamlit, FastAPI, SQLite, and optional Google Gemini**.
+A personalized shopping assistant built with **Streamlit, FastAPI, SQLite, and optional Google Gemini**.
 
-## Implemented features
+## Active application entry points
 
-- **API:** authenticated FastAPI endpoints with interactive OpenAPI docs at `/docs`.
-- **Embedded shopping agents:** a request-intent stage, profile/preferences stage, product-research stage, and explainable ranking stage. The pipeline works with a local intent parser and optionally uses Gemini for richer natural-language interpretation.
-- **Personalized profiles:** save a display name, budget range, preferred categories/brands/retailers, brands to avoid, interests, and additional shopping notes. Profile data is stored per account in SQLite.
-- **Personalized recommendations:** searches use saved budgets and preference signals; product cards explain which preferences influenced their ranking.
-- **UI refresh:** redesigned navigation, visual theme, shopping chat, product exploration, and profile editor.
-- Existing account recovery, password change, product collections, and product catalog remain available.
+The integrated application is `backend/main.py` (FastAPI) plus `frontend/app.py` (Streamlit).
+Run the backend from `backend/` and the frontend from `frontend/` as shown below. The
+root-level `app.py` and `main.py` are retained legacy prototypes and are not the active
+full-stack entry points.
 
-The product catalog currently contains seeded demonstration products. Search and recommendation quality is limited by the products available in that catalog; connect a licensed product/search provider before presenting results as comprehensive live-market inventory.
+## Features
+
+- Authenticated API with JWT-based sessions and interactive FastAPI docs.
+- AI shopping workflow with intent, profile, catalog-research, and ranking stages.
+- Deterministic local intent parsing works without an LLM key; Gemini is optional and falls back safely when unavailable.
+- Profile-aware recommendations with an explainable 0–100 match score.
+- Product browsing with category and budget filters.
+- Product collections and saved shopping searches.
+- Account creation, login, password changes, and recovery-code reset.
+- Per-user saved profile preferences and theme selection.
+- Automated tests and GitHub Actions CI workflow.
+
+**Product data note:** the current catalog is seeded demonstration data in SQLite. It is not a live retailer feed and does not guarantee current prices or availability. Before describing results as live inventory, connect a licensed product/retailer data provider and validate its terms, attribution, price freshness, and purchase URLs.
 
 ## Run locally
 
@@ -19,7 +29,7 @@ Python 3.10+ recommended.
 
 ### 1. Install dependencies
 
-From the `shopping-assistant` directory:
+From `shopping-assistant`:
 
 ```bash
 python -m venv .venv
@@ -32,7 +42,7 @@ source .venv/bin/activate
 
 Windows PowerShell:
 ```powershell
-.venv\Scripts\Activate.ps1
+.venv\\Scripts\\Activate.ps1
 ```
 
 Then:
@@ -42,7 +52,7 @@ pip install -r requirements.txt
 
 ### 2. Configure environment
 
-Copy `.env.example` to `.env`. Set a unique `SECRET_KEY`. To enable Gemini-powered intent interpretation, add your own `GEMINI_API_KEY`. The shopping-agent workflow still runs without Gemini using the local intent parser.
+Copy `.env.example` to `.env` and set a unique `SECRET_KEY`. `GEMINI_API_KEY` is optional.
 
 ```env
 SECRET_KEY=replace-with-a-long-random-secret
@@ -51,7 +61,7 @@ DB_PATH=
 CORS_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
 ```
 
-Keep `.env` private and never commit API keys or production secrets.
+Never commit `.env` or production secrets.
 
 ### 3. Start the backend
 
@@ -61,78 +71,79 @@ cd backend
 uvicorn main:app --reload
 ```
 
-Backend:
-- Health: http://127.0.0.1:8000/health
-- Interactive API documentation: http://127.0.0.1:8000/docs
-- OpenAPI schema: http://127.0.0.1:8000/openapi.json
+API health: http://127.0.0.1:8000/health  
+Interactive API docs: http://127.0.0.1:8000/docs
 
 ### 4. Start the frontend
 
-Terminal 2, from the `shopping-assistant` directory:
+Terminal 2, from `shopping-assistant`:
 ```bash
 cd frontend
 streamlit run app.py
 ```
 
-Open the local URL printed by Streamlit, normally http://localhost:8501.
+Open the URL printed by Streamlit (normally http://localhost:8501).
 
 ## API overview
 
-All shopping/profile/collection routes require `Authorization: Bearer <access_token>` after signup or login.
+Authenticated routes require `Authorization: Bearer <access_token>`.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/health` | Backend health |
-| POST | `/signup` | Create an account |
-| POST | `/login` | Get a bearer token |
-| GET | `/me` | Current account/profile |
-| GET | `/me/profile` | Read saved shopping profile |
-| PATCH | `/me/profile` | Update profile/preferences |
-| GET | `/me/preferences` | Read recommendation preferences |
-| POST | `/agents/shop` | Run the embedded shopping-agent workflow |
-| POST | `/ai-search` | Gemini-backed intent search |
-| GET | `/search` | Search catalog with profile-aware ranking |
-| GET | `/categories` | List product categories |
+| GET | `/health` | Health check |
+| POST | `/signup` / `/login` | Create account / sign in |
+| GET | `/me` / `/me/profile` | Read account and preferences |
+| PATCH | `/me/profile` | Update profile and theme |
+| POST | `/agents/shop` | Run the orchestrated shopping workflow |
+| POST | `/ai-search` | Interpret and search a shopping request |
+| GET | `/search` | Search and rank the catalog |
+| GET | `/categories` | List catalog categories |
+| GET/POST | `/saved-searches` | List or save a search |
+| DELETE | `/saved-searches/{id}` | Delete a saved search |
 | POST | `/projects` | Create a product collection |
 | GET | `/projects` | List collections |
 | GET | `/projects/{id}/items` | View collection items |
 | POST | `/projects/{id}/items?product_id=...` | Save a product to a collection |
 | DELETE | `/projects/{id}` | Delete a collection |
 
-For exact request/response schemas, use `/docs`.
+Use `/docs` for exact schemas and interactive requests.
 
-## How the embedded agents work
+## Testing
 
-1. **Intent Agent** extracts the product terms and any budget in the request. Gemini is used when configured; otherwise a local parser handles common budget phrases.
-2. **Profile Agent** loads the signed-in user's saved preferences.
-3. **Product Research Agent** retrieves matching items from the local product catalog.
-4. **Ranking Agent** applies explainable preference signals and returns reasons alongside the products.
-
-The agents are currently implemented as an orchestrated backend workflow, not as independent autonomous services. This keeps the prototype easy to run and test while providing a clear extension point for specialized tools later.
-
-## Database and existing accounts
-
-The backend creates `backend/shop.db` automatically. Existing user databases are migrated by adding profile columns without deleting existing accounts or collections.
-
-## Tests and checks
-
-Compile-check the Python files:
+From this directory:
 ```bash
-python -m compileall backend frontend
-```
-
-Run the test suite if/when tests are present:
-```bash
+python -m compileall -q backend frontend
 pytest -q
 ```
 
-## Deployment notes
+The test suite covers local intent parsing, agent orchestration, product score bounds, and extraction of price/rating/review signals. GitHub Actions runs these checks on pushes and pull requests that change `shopping-assistant`.
 
-Before production deployment:
-- Set a strong `SECRET_KEY` and disable development defaults.
-- Use HTTPS and a managed database with backups.
-- Configure CORS to only trusted frontend origins.
-- Add rate limits and operational monitoring.
-- Connect a real product data provider and verify product prices/availability at the retailer.
-- Add an email provider for account recovery instead of relying on one-time recovery codes.
-- Review privacy, retention, and consent requirements for saved user preferences.
+## Web deployment (Render)
+
+A repository-root `render.yaml` blueprint is included. It defines:
+- FastAPI backend with a persistent disk for SQLite.
+- Streamlit frontend configured to call the backend.
+- A generated `SECRET_KEY`.
+- A health check at `/health`.
+
+To deploy:
+1. Push the updated repository to GitHub.
+2. In Render, create a new Blueprint and select the repository.
+3. Confirm the two services and persistent disk in the blueprint.
+4. Add `GEMINI_API_KEY` to the backend service only if you want Gemini-enhanced interpretation.
+5. After the frontend service is created, confirm its public URL and update the backend `CORS_ORIGINS` environment variable to that exact URL.
+6. Confirm the frontend `BACKEND_URL` points to the backend service's public URL.
+7. Deploy and test signup, login, AI search, browse, collections, saved searches, and profile updates.
+
+Render's persistent disk may require a paid plan. Do not use an ephemeral filesystem for the SQLite production database. For a larger deployment, use managed PostgreSQL, HTTPS, rate limiting, monitoring, backups, and a verified product-data provider.
+
+## Security and production checklist
+
+- Set a unique production `SECRET_KEY`; never use the development fallback.
+- Restrict CORS to the actual frontend origin.
+- Keep API keys in hosting environment variables.
+- Use HTTPS and persistent, backed-up database storage.
+- Add email-based account recovery before relying on this for real users; recovery codes are currently a manual fallback.
+- Add rate limiting and monitoring to public endpoints.
+- Connect a licensed live product provider before claiming live retailer pricing or availability.
+- Review privacy and retention requirements for saved profile preferences.

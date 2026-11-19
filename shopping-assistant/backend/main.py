@@ -15,8 +15,17 @@ from typing import Optional
 import json
 from pathlib import Path
 from dotenv import load_dotenv
-from google import genai
-from google.genai import errors
+try:
+    from google import genai
+    from google.genai import errors
+except ImportError:
+    genai = None
+    errors = None
+
+try:
+    from .ai import interpret_intent
+except ImportError:
+    from ai import interpret_intent
 
 
 import bcrypt
@@ -38,11 +47,7 @@ DB_PATH = os.getenv("DB_PATH") or str(Path(__file__).resolve().parent / "shop.db
 # Initialize Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-gemini_client = (
-    genai.Client(api_key=GEMINI_API_KEY)
-    if GEMINI_API_KEY
-    else None
-)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY and genai else None
 
 app = FastAPI(
     title="Shopwise AI API",
@@ -102,6 +107,7 @@ def init_db():
             "interests": "TEXT NOT NULL DEFAULT ''",
             "preferred_retailers": "TEXT NOT NULL DEFAULT '[]'",
             "profile_notes": "TEXT NOT NULL DEFAULT ''",
+            "theme": "TEXT NOT NULL DEFAULT 'Dark'",
         }
         for column, definition in profile_columns.items():
             if column not in user_columns:
@@ -133,6 +139,14 @@ def init_db():
                 product_id INTEGER NOT NULL REFERENCES products(id),
                 added_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (project_id, product_id)
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS saved_searches (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                query TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )"""
         )
         # Seed sample data so the UI has something to show (replace with a real dataset later)
@@ -193,6 +207,10 @@ class AISearchRequest(BaseModel):
     limit: int = Field(default=12, ge=1, le=50)
 
 
+class SavedSearchCreate(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+
+
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=80)
     budget_min: Optional[float] = Field(default=None, ge=0, le=1000000)
@@ -203,6 +221,7 @@ class ProfileUpdate(BaseModel):
     interests: Optional[str] = Field(default=None, max_length=500)
     preferred_retailers: Optional[list[str]] = Field(default=None, max_length=30)
     profile_notes: Optional[str] = Field(default=None, max_length=500)
+    theme: Optional[str] = Field(default=None, pattern="^(Light|Dark|UT Knoxville)$")
 
 
 # ---------- Auth helpers ----------
@@ -319,7 +338,7 @@ def login(
 def me(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     row = db.execute(
         "SELECT id, username, display_name, budget_min, budget_max, preferred_categories, "
-        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes "
+        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes, theme "
         "FROM users WHERE id = ?", (user["id"],)
     ).fetchone()
     return serialize_profile(row)
@@ -339,7 +358,7 @@ def serialize_profile(row):
 def get_profile(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
     row = db.execute(
         "SELECT id, username, display_name, budget_min, budget_max, preferred_categories, "
-        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes "
+        "preferred_brands, avoided_brands, interests, preferred_retailers, profile_notes, theme "
         "FROM users WHERE id = ?", (user["id"],)
     ).fetchone()
     return serialize_profile(row)
@@ -613,100 +632,43 @@ def search_products(db, q="", min_price=None, max_price=None, category=None, lim
     }
 
 def interpret_search_query(query, categories):
-    """
-    Uses Gemini to interpret a user's shopping request.
-
-    Extracts:
-    - Product keywords
-    - Minimum price
-    - Maximum price
-    - Product category
-    - Explanation of the request
-    """
-
+    """Use Gemini when configured; deterministic parsing is the reliable fallback."""
+    local = interpret_intent(query, categories)
     if gemini_client is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Gemini API key is not configured."
-        )
-
+        return local
     prompt = f"""
-    You are an AI shopping assistant.
-
-    Interpret the user's shopping request and extract the information
-    needed to search a product database.
-
-    Available categories:
-    {categories}
-
-    Return ONLY a JSON object with these fields:
-
-    {{
-        "keywords": "product search keywords",
-        "min_price": null,
-        "max_price": null,
-        "category": null,
-        "explanation": "brief explanation"
-    }}
-
-    Rules:
-    - Only use categories from the available category list.
-    - Use null when no price limit is specified.
-    - Under $100 means max_price = 100.
-    - Over $50 means min_price = 50.
-    - Extract both limits when a range is specified.
-    - Keywords should describe the product, not the entire sentence.
-    - Do not invent products.
-    - Do not include price information in keywords.
-
+    Extract a shopping request into JSON with keywords, min_price, max_price,
+    category, and explanation. Only use categories from: {categories}.
+    Use null for unspecified price limits. Do not invent products.
     User request: {query}
     """
-
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             contents=prompt,
-            config={
-                "response_mime_type": "application/json"
-            }
+            config={"response_mime_type": "application/json"},
         )
-
-        result = json.loads(response.text)
-
-        if not isinstance(result, dict):
-            raise ValueError("Gemini returned an invalid response.")
-
+        parsed = json.loads(response.text or "{}")
+        if not isinstance(parsed, dict):
+            return local
+        result = {**local, **parsed}
+        if not isinstance(result.get("keywords"), str) or not result["keywords"].strip():
+            result["keywords"] = local["keywords"]
+        if result.get("category") not in categories:
+            result["category"] = local["category"]
+        for key in ("min_price", "max_price"):
+            value = result.get(key)
+            result[key] = float(value) if value is not None else None
+            if result[key] is not None and result[key] < 0:
+                result[key] = local[key]
+        if (result["min_price"] is not None and result["max_price"] is not None
+                and result["min_price"] > result["max_price"]):
+            result["min_price"], result["max_price"] = local["min_price"], local["max_price"]
         return result
+    except Exception:
+        # Provider outages, malformed JSON, and rate limits must not break shopping.
+        return local
 
-    except errors.APIError as e:
-        print(f"Gemini API error: {e.code} - {e.message}")
-
-        if e.code == 503:
-            raise HTTPException(
-                status_code=503,
-                detail="Gemini is temporarily unavailable. Try again shortly."
-            )
-
-        raise HTTPException(
-            status_code=502,
-            detail="There was a problem communicating with Gemini."
-        )
-
-    except (ValueError, TypeError, AttributeError) as e:
-        print("Invalid Gemini response:", e)
-
-        raise HTTPException(
-            status_code=502,
-            detail="Gemini returned an invalid search interpretation."
-        )
-
-    except Exception as e:
-        print("Unexpected Gemini error:", e)
-
-        raise HTTPException(
-            status_code=500,
-            detail="The AI assistant could not interpret your request."
-        )
 
 @app.get("/search")
 def search(
@@ -872,6 +834,39 @@ def agent_shop(
         ],
         "results": ranked
     }
+
+
+# ---------- Saved searches ----------
+@app.get("/saved-searches")
+def list_saved_searches(user: dict = Depends(get_current_user), db: sqlite3.Connection = Depends(get_db)):
+    rows = db.execute(
+        "SELECT id, query, created_at FROM saved_searches WHERE user_id = ? ORDER BY id DESC",
+        (user["id"],),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/saved-searches", status_code=201)
+def create_saved_search(body: SavedSearchCreate, user: dict = Depends(get_current_user),
+                        db: sqlite3.Connection = Depends(get_db)):
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="Search query cannot be blank")
+    cur = db.execute("INSERT INTO saved_searches (user_id, query) VALUES (?, ?)",
+                     (user["id"], query))
+    db.commit()
+    return {"id": cur.lastrowid, "query": query}
+
+
+@app.delete("/saved-searches/{search_id}")
+def delete_saved_search(search_id: int, user: dict = Depends(get_current_user),
+                        db: sqlite3.Connection = Depends(get_db)):
+    cur = db.execute("DELETE FROM saved_searches WHERE id = ? AND user_id = ?",
+                     (search_id, user["id"]))
+    db.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Saved search not found")
+    return {"message": "Saved search deleted"}
 
 
 # ---------- Projects (named groups of products) ----------
