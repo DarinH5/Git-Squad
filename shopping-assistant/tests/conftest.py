@@ -18,6 +18,9 @@ def test_db(tmp_path, monkeypatch):
     # Initialize the test database using the real schema.
     main.init_db()
 
+    # Apply the project-sharing schema to this isolated test database.
+    main.sharing.init_tables(str(db_path))
+
     yield db_path
 
 

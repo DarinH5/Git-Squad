@@ -33,5 +33,6 @@ jobs:
         env:
           SECRET_KEY: github-actions-test-secret-not-for-production
           GEMINI_API_KEY: ""
+          PYTHONPATH: ".:backend"
         run: |
           python -m pytest tests/ --cov=backend --cov-report=term-missing
