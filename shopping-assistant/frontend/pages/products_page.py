@@ -23,10 +23,16 @@ if "browse_query" not in st.session_state:
 if search_clicked:
     st.session_state.browse_query = params
 
-r = api.get("/search", **st.session_state.browse_query)
+try:
+    r = api.get("/search", **st.session_state.browse_query)
+except RuntimeError as exc:
+    st.error(str(exc))
+    st.stop()
 if r.ok:
     data = r.json()
     st.caption(f"{len(data['results'])} products · recommendations may reflect your saved profile")
     product_cards(data["results"], per_row=3, key_prefix="browse")
 else:
-    st.error(f"Search failed ({r.status_code}): {r.text}")
+    st.error("Product search failed. Please check your filters and try again.")
+    with st.expander("Technical details"):
+        st.code(r.text[:1000])

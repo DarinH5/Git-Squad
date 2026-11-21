@@ -62,15 +62,17 @@ def logout():
 
 
 def _request(method, path, body=None, **params):
-    """Authenticated request. Logs the user out if the token has expired."""
-    r = requests.request(
-        method,
-        f"{API}{path}",
-        params=params,
-        json=body,
-        headers={"Authorization": f"Bearer {st.session_state.token}"},
-        timeout=10,
-    )
+    """Authenticated request with consistent timeout and connection handling."""
+    try:
+        r = requests.request(
+            method, f"{API}{path}", params=params, json=body,
+            headers={"Authorization": f"Bearer {st.session_state.get('token', '')}"},
+            timeout=(5, 25),
+        )
+    except requests.Timeout as exc:
+        raise RuntimeError("The shopping service took too long to respond. Please try again.") from exc
+    except requests.ConnectionError as exc:
+        raise RuntimeError("Cannot reach the shopping backend. Check that the API is running.") from exc
     if r.status_code == 401:
         logout()
         st.rerun()
@@ -120,3 +122,15 @@ def shop_with_agents(query, limit=12):
 
 def get_profile():
     return get("/me/profile")
+
+
+def save_search(query):
+    return post("/saved-searches", body={"query": query})
+
+
+def get_saved_searches():
+    return get("/saved-searches")
+
+
+def delete_saved_search(search_id):
+    return delete(f"/saved-searches/{search_id}")

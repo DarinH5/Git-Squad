@@ -33,13 +33,25 @@ for index, message in enumerate(st.session_state.shopping_history):
             if message.get("personalized"):
                 st.caption("✨ Ranked using your saved shopping profile")
             product_cards(message["products"], key_prefix=f"agent_chat_{index}")
+            if message.get("query") and st.button("Save this search", key=f"save_query_{index}"):
+                saved = api.save_search(message["query"])
+                if saved.status_code == 201:
+                    st.success("Search saved.")
+                elif saved.status_code == 409:
+                    st.info("This search is already saved.")
+                else:
+                    st.error("Couldn't save this search. Please try again.")
 
 query = st.session_state.pop("pending_shopping_query", None) or st.chat_input("What are you shopping for?")
 if query and query.strip():
     query = query.strip()
     st.session_state.shopping_history.append({"role": "user", "content": query})
-    with st.spinner("Your shopping agents are researching products..."):
-        response = api.shop_with_agents(query, limit=9)
+    try:
+        with st.spinner("Your shopping agents are researching products..."):
+            response = api.shop_with_agents(query, limit=9)
+    except RuntimeError as exc:
+        st.error(str(exc))
+        st.stop()
     if response.ok:
         data = response.json()
         products = data.get("results", [])
@@ -50,12 +62,16 @@ if query and query.strip():
         st.session_state.shopping_history.append({
             "role": "assistant",
             "content": reply,
+            "query": query,
             "products": products,
             "agents": data.get("agents", []),
             "personalized": data.get("personalized", False),
         })
     else:
-        detail = response.json().get("detail", "The shopping service is unavailable.")
+        try:
+            detail = response.json().get("detail", "The shopping service is unavailable.")
+        except ValueError:
+            detail = "The shopping service returned an unexpected response."
         st.session_state.shopping_history.append({
             "role": "assistant",
             "content": f"I couldn't complete that search: {detail}",

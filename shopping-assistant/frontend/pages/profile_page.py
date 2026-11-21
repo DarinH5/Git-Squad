@@ -14,6 +14,8 @@ profile = response.json()
 
 with st.form("shopping_profile"):
     st.subheader("About you")
+    theme = st.selectbox("App theme", ["Dark", "Light", "UT Knoxville"],
+                         index=["Dark", "Light", "UT Knoxville"].index(profile.get("theme", "Dark")))
     display_name = st.text_input("Display name", value=profile.get("display_name") or "")
     interests = st.text_area("Interests and shopping needs", value=profile.get("interests") or "",
                              placeholder="e.g. college student, hiking, gaming, home office")
@@ -45,6 +47,7 @@ if saved:
         split = lambda value: [part.strip() for part in value.split(",") if part.strip()]
         updated = api.update_profile(
             display_name=display_name,
+            theme=theme,
             interests=interests,
             budget_min=budget_min or None,
             budget_max=budget_max or None,

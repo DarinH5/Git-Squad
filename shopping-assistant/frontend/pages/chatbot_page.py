@@ -1,117 +1,34 @@
+"""Saved searches: revisit a useful shopping request without retyping it."""
 import streamlit as st
-import streamlit.components.v1 as components
+import api
 
-#Scrolls to latest search result
-def scroll_to_latest_search() -> None:
-	# Inject a small browser script that waits for and scrolls to the newest result.
-	components.html(
-		"""
-		<script>
-			let attempts = 0;
-			const scrollToSearch = function () {
-				const parentDocument = window.parent.document;
-				const marker = parentDocument.getElementById("latest-search");
-				if (marker) {
-					marker.scrollIntoView({ behavior: "smooth", block: "end" });
-					return;
-				}
-				attempts += 1;
-				if (attempts < 20) {
-					setTimeout(scrollToSearch, 100);
-				}
-			};
-			scrollToSearch();
-		</script>
-		""",
-		height=0,
-	)
+st.title("Saved searches")
+st.caption("Keep useful shopping requests and run them again whenever you need.")
 
-#Searches web for user input
-def search_products(item: str) -> list[dict[str, str]]:
-	# Query the search provider and normalize results for the chatbot UI.
-	from ddgs import DDGS
+try:
+    response = api.get_saved_searches()
+except RuntimeError as exc:
+    st.error(str(exc))
+    st.stop()
 
-	query = f"{item} buy online price"
-	results = DDGS().text(query, safesearch="moderate", max_results=6)
-	return [
-		{
-			"title": result.get("title", "Shopping result"),
-			"href": result.get("href", ""),
-			"body": result.get("body", "No description available."),
-		}
-		for result in results
-		if result.get("href")
-	]
+if not response.ok:
+    st.error("Couldn't load saved searches. Please try again.")
+    st.stop()
 
-
-def show_results(item: str, results: list[dict[str, str]]) -> None:
-	# Render product links and descriptions, or an informative empty-state message.
-	if not results:
-		st.info(f"I couldn't find results for **{item}**. Try a broader product name.")
-		return
-
-	st.markdown(f"### Results for {item}")
-	for result in results:
-		st.markdown(f"**[{result['title']}]({result['href']})**")
-		st.caption(result["body"])
-
-
-def process_prompt(item: str) -> None:
-	# Record the user's request, perform the search, and store the assistant response.
-	st.session_state.shopping_messages.append({"role": "user", "content": item})
-	with st.chat_message("user"):
-		st.write(item)
-
-	with st.chat_message("assistant"):
-		search_failed = False
-		with st.spinner("Searching the web..."):
-			try:
-				results = search_products(item)
-			except Exception:
-				results = []
-				search_failed = True
-				st.error("The web search is unavailable right now. Please try again in a moment.")
-
-		if results:
-			show_results(item, results)
-		elif not search_failed:
-			st.info(f"I couldn't find results for **{item}**. Try a broader product name.")
-
-	st.session_state.shopping_messages.append(
-		{"role": "assistant", "item": item, "results": results}
-	)
-
-
-
-st.title("Shopping Assistant")
-st.write("Tell me what you want to buy and I’ll search the web for useful options.")
-
-if "shopping_messages" not in st.session_state:
-	st.session_state.shopping_messages = [
-		{
-			"role": "assistant",
-			"content": "What are you shopping for today? Include a brand, budget, or preferred features if you have them.",
-		}
-	]
-
-for message in st.session_state.shopping_messages:
-	with st.chat_message(message["role"]):
-		if message.get("results"):
-			show_results(message["item"], message["results"])
-		else:
-			st.write(message["content"])
-
-pending_prompt = st.session_state.pop("pending_chat_prompt", None)
-prompt = pending_prompt or st.chat_input("Search for a product...")
-redirected_search = st.session_state.pop("scroll_to_latest_search", False)
-if prompt:
-	item = prompt.strip()
-	if item:
-		process_prompt(item)
-		if redirected_search:
-			st.session_state.scroll_after_search_render = True
-			st.rerun()
-
-if st.session_state.pop("scroll_after_search_render", False):
-	st.markdown('<div id="latest-search"></div>', unsafe_allow_html=True)
-	scroll_to_latest_search()
+saved = response.json()
+if not saved:
+    st.info("You haven't saved any searches yet. Run a search in AI Shopping and save it from the results.")
+else:
+    for item in saved:
+        with st.container(border=True):
+            left, run_col, delete_col = st.columns([5, 1, 1])
+            left.markdown(f"**{item['query']}**")
+            left.caption(f"Saved {item.get('created_at') or ''}")
+            if run_col.button("Run", key=f"run_saved_{item['id']}", use_container_width=True):
+                st.session_state.pending_shopping_query = item["query"]
+                st.switch_page("pages/home_page.py")
+            if delete_col.button("Delete", key=f"delete_saved_{item['id']}", use_container_width=True):
+                result = api.delete_saved_search(item["id"])
+                if result.ok:
+                    st.rerun()
+                st.error("Couldn't delete that saved search.")

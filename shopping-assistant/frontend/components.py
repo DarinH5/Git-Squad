@@ -155,7 +155,11 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
     if mode == "browse":
         pr = api.get("/projects")
         projects = pr.json() if pr.ok else []
-    project_names = {p["id"]: p["name"] for p in projects}
+    # Shared projects show who they belong to, so two projects with the same name can be told apart
+    project_names = {
+        p["id"]: p["name"] if p.get("is_owner", True) else f"{p['name']} (shared by {p['owner']})"
+        for p in projects
+    }
 
 
     for start in range(0, len(products), per_row):
@@ -172,10 +176,15 @@ def product_cards(products, per_row=3, key_prefix="browse", mode="browse", proje
                 st.write(f"**${price:,.2f}**" if isinstance(price, (int, float)) else "**Price unavailable**")
                 if rating is not None:
                     st.caption(f"⭐ {rating}/5")
+                if p.get("recommendation_score") is not None:
+                    st.progress(max(0, min(100, int(p["recommendation_score"]))) / 100)
+                    st.caption(f"Personalized match: **{int(p['recommendation_score'])}/100**")
                 if p.get("personalization_reasons"):
                     st.caption(" · ".join(p["personalization_reasons"]))
                 if p.get("description"):
                     st.write(p["description"])
+                if p.get("added_by"):  # only present inside shared projects
+                    st.caption(f"Added by {p['added_by']}")
                 if p.get("product_url"):
                     st.markdown(f"[View product ↗]({p['product_url']})")
  
