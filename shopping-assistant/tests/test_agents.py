@@ -174,6 +174,7 @@ def test_ai_search_with_mocked_gemini(
 
 
 def test_invalid_gemini_json(monkeypatch):
+    """Malformed Gemini JSON must trigger local interpretation."""
     fake_client = SimpleNamespace(
         models=SimpleNamespace(
             generate_content=lambda **kwargs:
@@ -182,10 +183,15 @@ def test_invalid_gemini_json(monkeypatch):
     )
     monkeypatch.setattr(main, "gemini_client", fake_client)
 
-    with pytest.raises(HTTPException) as error:
-        main.interpret_search_query("boots", ["footwear"])
+    result = main.interpret_search_query(
+        "boots under $100", ["footwear"]
+    )
 
-    assert error.value.status_code == 502
+    assert isinstance(result, dict)
+    assert result["max_price"] == 100
+    assert isinstance(result["keywords"], str)
+    assert result["keywords"].strip()
+
 
 
 def test_ai_search_rejects_invalid_prices(
@@ -215,12 +221,21 @@ def test_ai_search_rejects_invalid_prices(
 def test_ai_search_without_gemini(
     client, auth_headers, monkeypatch
 ):
+    """AI search must work without the external Gemini service."""
     monkeypatch.setattr(main, "gemini_client", None)
 
     response = client.post(
         "/ai-search",
         headers=auth_headers,
-        json={"query": "boots"}
+        json={"query": "boots under $100"}
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200
+    data = response.json()
+    assert data["applied"]["max_price"] == 100
+    assert isinstance(data["results"], list)
+    assert len(data["results"]) > 0
+    assert all(
+        item["price"] <= 100
+        for item in data["results"]
+    )
