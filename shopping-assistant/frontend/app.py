@@ -1,7 +1,7 @@
 """Streamlit entry point for the AI Shopping Assistant."""
 import streamlit as st
 import api
-from components import apply_theme, _ensure_theme
+#from components import apply_theme, _ensure_theme
 
 st.set_page_config(page_title="Shopwise AI", layout="wide",
                    initial_sidebar_state="expanded")
@@ -43,5 +43,5 @@ else:
     </style>""", unsafe_allow_html=True)
     pg = st.navigation([login_page, recover_page], position="hidden")
 
-apply_theme()
+#apply_theme()
 pg.run()
