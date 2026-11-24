@@ -1,7 +1,7 @@
 """
 FastAPI + SQLite auth backend (JWT + bcrypt).
 
-Install:  pip install fastapi uvicorn pyjwt bcrypt python-multipart
+Install:  pip install fastapi uvicorn pyjwt bcrypt python-multipart requests python-dotenv google-genai
 Run:      SECRET_KEY="long-random-string" uvicorn main:app --reload
 Docs:     http://localhost:8000/docs  (you can test signup/login here)
 """
@@ -15,6 +15,8 @@ from typing import Optional
 import json
 from pathlib import Path
 from dotenv import load_dotenv
+load_dotenv()
+
 try:
     from google import genai
     from google.genai import errors
@@ -27,6 +29,11 @@ try:
 except ImportError:
     from ai import interpret_intent
 
+try:
+    from .ebay_service import EbayAPIError, ebay_is_configured, search_ebay_products
+except ImportError:
+    from ebay_service import EbayAPIError, ebay_is_configured, search_ebay_products
+
 
 import bcrypt
 import jwt
@@ -36,7 +43,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
 
-load_dotenv()
+
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-for-local-development-only")
 
@@ -125,6 +132,19 @@ def init_db():
                 product_url TEXT
             )"""
         )
+        # eBay metadata is added in-place. Existing product IDs remain unchanged,
+        # so project_items references continue to work.
+        product_columns = {row[1] for row in conn.execute("PRAGMA table_info(products)")}
+        if "source" not in product_columns:
+            conn.execute("ALTER TABLE products ADD COLUMN source TEXT NOT NULL DEFAULT 'local'")
+        if "external_id" not in product_columns:
+            conn.execute("ALTER TABLE products ADD COLUMN external_id TEXT")
+        if "retailer" not in product_columns:
+            conn.execute("ALTER TABLE products ADD COLUMN retailer TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_source_external "
+            "ON products(source, external_id)"
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY,
@@ -194,8 +214,6 @@ class RecoverRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=72)
 
 
-class ProjectCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=50)
 
 
 class Token(BaseModel):
@@ -463,7 +481,10 @@ def personalize_products(products, profile):
             reasons.append("Matches interests in your profile")
         product["personalization_score"] = score
         product["personalization_reasons"] = reasons
-        product["recommendation_score"] = max(0, min(100, int(product.get("rating", 0) * 10 + score)))
+        rating = product.get("rating") or 0
+        product["recommendation_score"] = max(
+            0, min(100, int(rating * 10 + score))
+        )
     products.sort(key=lambda x: (x.get("personalization_score", 0), x.get("rating") or 0), reverse=True)
     return products
 
@@ -670,6 +691,126 @@ def interpret_search_query(query, categories):
         return local
 
 
+
+def save_ebay_products(db, products):
+    """Upsert eBay or mock listings while retaining stable SQLite IDs."""
+    saved_ids = []
+
+    for product in products:
+        external_id = product.get("external_id")
+        if not external_id:
+            continue
+
+        source = product.get("source", "ebay")
+        retailer = product.get("retailer", "eBay")
+
+        db.execute(
+            """INSERT INTO products
+               (title, description, category, brand, price, rating, image_url,
+                product_url, source, external_id, retailer)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source, external_id) DO UPDATE SET
+                 title=excluded.title,
+                 description=excluded.description,
+                 category=excluded.category,
+                 brand=excluded.brand,
+                 price=excluded.price,
+                 rating=excluded.rating,
+                 image_url=excluded.image_url,
+                 product_url=excluded.product_url,
+                 retailer=excluded.retailer""",
+            (
+                product.get("title") or "Untitled listing",
+                product.get("description"),
+                product.get("category"),
+                product.get("brand"),
+                product.get("price"),
+                product.get("rating"),
+                product.get("image_url"),
+                product.get("product_url"),
+                source,
+                external_id,
+                retailer,
+            ),
+        )
+
+        row = db.execute(
+            "SELECT id FROM products WHERE source = ? AND external_id = ?",
+            (source, external_id),
+        ).fetchone()
+
+        if row:
+            saved_ids.append(row["id"])
+
+    db.commit()
+
+    if not saved_ids:
+        return []
+
+    marks = ",".join("?" for _ in saved_ids)
+    rows = db.execute(
+        f"SELECT * FROM products WHERE id IN ({marks})",
+        saved_ids,
+    ).fetchall()
+
+    by_id = {row["id"]: dict(row) for row in rows}
+    return [by_id[pid] for pid in saved_ids if pid in by_id]
+
+
+
+
+def retrieve_products(db, query="", min_price=None, max_price=None,
+                      category=None, limit=12):
+    """Retrieve products from eBay or mock mode, falling back to SQLite."""
+
+    if ebay_is_configured():
+        try:
+            listings = search_ebay_products(
+                query=query,
+                min_price=min_price,
+                max_price=max_price,
+                limit=limit,
+            )
+
+            products = save_ebay_products(db, listings)
+
+            if category:
+                products = [
+                    p for p in products
+                    if (p.get("category") or "").casefold()
+                    == category.casefold()
+                ]
+
+            source = (
+                "mock"
+                if listings and listings[0].get("source") == "mock"
+                else "ebay"
+            )
+
+            return products[:limit], source
+
+        except EbayAPIError as exc:
+            print(f"eBay search unavailable; using local catalog: {exc}")
+
+    local = search_products(
+        db, query, min_price, max_price, category, limit
+    )
+
+    return local["results"], "local"
+
+
+
+@app.get("/ebay/status", tags=["system"])
+def ebay_status():
+    """Credential-presence check; does not expose secrets or make an eBay request."""
+    return {
+        "configured": ebay_is_configured(),
+        "environment": os.getenv("EBAY_ENV", "production").lower(),
+        "message": "eBay credentials detected" if ebay_is_configured()
+                   else "Add EBAY_CLIENT_ID and EBAY_CLIENT_SECRET to the backend .env file",
+    }
+
+
 @app.get("/search")
 def search(
     q: str = Query(default="", max_length=500),
@@ -684,9 +825,13 @@ def search(
     _, _, query_min, query_max = parse_search(q)
     effective_min = min_price if min_price is not None else (query_min if query_min is not None else profile.get("budget_min"))
     effective_max = max_price if max_price is not None else (query_max if query_max is not None else profile.get("budget_max"))
-    result = search_products(db, q, effective_min, effective_max, category, limit)
-    result["results"] = personalize_products(result["results"], profile)
-    return result
+    products, source = retrieve_products(db, q, effective_min, effective_max, category, limit)
+    return {
+        "query": q,
+        "applied": {"min_price": effective_min, "max_price": effective_max, "category": category},
+        "source": source,
+        "results": personalize_products(products, profile),
+    }
 
 
 @app.get("/categories")
@@ -752,21 +897,17 @@ def ai_search(
             detail="Gemini returned an invalid price range."
         )
 
-    # Use your existing search_products() function!
-    results = search_products(
-        db=db,
-        q=keywords,
-        min_price=min_price,
-        max_price=max_price,
-        category=category,
-        limit=body.limit
+    products, source = retrieve_products(
+        db=db, query=keywords, min_price=min_price, max_price=max_price,
+        category=category, limit=body.limit
     )
 
     profile = get_shopping_profile(db, user["id"])
-    ranked = personalize_products(results["results"], profile)
+    ranked = personalize_products(products, profile)
     return {
         "query": body.query,
         "interpretation": filters.get("explanation", ""),
+        "source": source,
         "applied": {
             "keywords": keywords,
             "min_price": min_price,
@@ -818,12 +959,13 @@ def agent_shop(
         low = max(low or 0, profile["budget_min"])
     if profile.get("budget_max") is not None:
         high = min(high, profile["budget_max"]) if high is not None else profile["budget_max"]
-    found = search_products(db, keywords, low, high, category, body.limit)
-    ranked = personalize_products(found["results"], profile)
+    products, source = retrieve_products(db, keywords, low, high, category, body.limit)
+    ranked = personalize_products(products, profile)
     active = any(profile.get(k) for k in ("preferred_categories", "preferred_brands", "avoided_brands", "preferred_retailers", "budget_min", "budget_max", "interests", "profile_notes"))
     return {
         "query": body.query,
         "interpretation": explanation,
+        "source": source,
         "applied": {"keywords": keywords, "min_price": low, "max_price": high, "category": category},
         "personalized": active,
         "agents": [
@@ -868,8 +1010,12 @@ def delete_saved_search(search_id: int, user: dict = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="Saved search not found")
     return {"message": "Saved search deleted"}
 
+# ---------- Shared projects ----------
+# The sharing module owns every /projects route, including membership and permissions.
+# The module may be named sharing.py or shopping.py in the local project.
+try:
+    import sharing as project_sharing
+except ImportError:
+    import shopping as project_sharing
 
-
-
-import sharing
-sharing.register(app, get_db, get_current_user, DB_PATH)
+project_sharing.register(app, get_db, get_current_user, DB_PATH)
